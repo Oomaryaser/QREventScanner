@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { QrCode, Users, Scan, CheckCircle, UserPlus, RotateCcw, Settings, Download } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
 // مولد QR Code حقيقي
 const generateQRCode = async (data, size = 200) => {
@@ -36,6 +37,18 @@ const QRAttendanceSystem = () => {
   const [scanResult, setScanResult] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [user, setUser] = useState(null);
+  const [eventHistory, setEventHistory] = useState([]);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
+    });
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   // توليد QR codes للضيوف
   const generateQRCodes = async (numberOfCodes, guestsPerCode) => {
@@ -144,6 +157,86 @@ const QRAttendanceSystem = () => {
     });
     setScanResult('');
     setShowScanner(false);
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  };
+
+  const endEvent = async () => {
+    const email = prompt('أدخل بريدك الإلكتروني لتأكيد إنهاء الفعالية');
+    const name = prompt('أدخل اسم الفعالية المنتهية');
+    if (!email || !name) return;
+    if (email !== user?.email) {
+      alert('البريد الإلكتروني لا يتطابق مع الحساب الحالي');
+      return;
+    }
+    const { error } = await supabase.from('event_history').insert({
+      email,
+      event_name: name,
+      event_id: eventData.eventId,
+      total_guests: eventData.totalGuests,
+      attended_guests: eventData.attendedGuests,
+      guests: eventData.guestsList,
+      ended_at: new Date().toISOString()
+    });
+    if (error) {
+      console.error('خطأ في حفظ الحدث:', error);
+      alert('حدث خطأ أثناء حفظ البيانات');
+      return;
+    }
+    setEventHistory(prev => [...prev, { email, eventName: name, data: eventData }]);
+    resetSystem();
+  };
+
+  const AuthForm = () => {
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [isSignUp, setIsSignUp] = useState(false);
+    const [error, setError] = useState(null);
+
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      setError(null);
+      const { error } = isSignUp
+        ? await supabase.auth.signUp({ email, password })
+        : await supabase.auth.signInWithPassword({ email, password });
+      if (error) setError(error.message);
+    };
+
+    return (
+      <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-md space-y-4 max-w-md mx-auto mt-10">
+        <h2 className="text-xl font-bold text-center">{isSignUp ? 'إنشاء حساب' : 'تسجيل الدخول'}</h2>
+        {error && <p className="text-red-600 text-center">{error}</p>}
+        <input
+          type="email"
+          placeholder="البريد الإلكتروني"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="w-full p-2 border rounded"
+          required
+        />
+        <input
+          type="password"
+          placeholder="كلمة المرور"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="w-full p-2 border rounded"
+          required
+        />
+        <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded">
+          {isSignUp ? 'إنشاء' : 'دخول'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setIsSignUp(!isSignUp)}
+          className="text-sm text-blue-600 underline block mx-auto"
+        >
+          {isSignUp ? 'لديك حساب؟ سجل الدخول' : 'ليس لديك حساب؟ أنشئ واحداً'}
+        </button>
+      </form>
+    );
   };
 
   // واجهة منظم الحفلة
@@ -423,6 +516,13 @@ const QRAttendanceSystem = () => {
             {/* أزرار التحكم */}
             <div className="flex gap-3">
               <button
+                onClick={endEvent}
+                className="flex-1 bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <CheckCircle className="w-5 h-5" />
+                إنهاء الفعالية
+              </button>
+              <button
                 onClick={resetSystem}
                 className="flex-1 bg-red-600 text-white px-4 py-3 rounded-md hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
               >
@@ -555,36 +655,63 @@ const QRAttendanceSystem = () => {
   return (
     <div className="min-h-screen bg-gray-50 p-2 sm:p-4" dir="rtl">
       <div className="max-w-7xl mx-auto">
-        {/* شريط التنقل */}
-        <div className="bg-white rounded-lg shadow-md p-3 sm:p-4 mb-4 sm:mb-6">
-          <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
-            <button
-              onClick={() => setCurrentView('organizer')}
-              className={`flex-1 py-2 sm:py-3 px-3 sm:px-4 rounded-md transition-colors flex items-center justify-center gap-1.5 sm:gap-2 text-sm sm:text-base ${
-                currentView === 'organizer'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
-              منظم الحفلة
-            </button>
-            <button
-              onClick={() => setCurrentView('guest')}
-              className={`flex-1 py-2 sm:py-3 px-3 sm:px-4 rounded-md transition-colors flex items-center justify-center gap-1.5 sm:gap-2 text-sm sm:text-base ${
-                currentView === 'guest'
-                  ? 'bg-green-600 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              <Scan className="w-4 h-4 sm:w-5 sm:h-5" />
-              الضيف
-            </button>
-          </div>
-        </div>
+        {!user ? (
+          <AuthForm />
+        ) : (
+          <>
+            {/* شريط التنقل */}
+            <div className="bg-white rounded-lg shadow-md p-3 sm:p-4 mb-4 sm:mb-6">
+              <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
+                <button
+                  onClick={() => setCurrentView('organizer')}
+                  className={`flex-1 py-2 sm:py-3 px-3 sm:px-4 rounded-md transition-colors flex items-center justify-center gap-1.5 sm:gap-2 text-sm sm:text-base ${
+                    currentView === 'organizer'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
+                  منظم الحفلة
+                </button>
+                <button
+                  onClick={() => setCurrentView('guest')}
+                  className={`flex-1 py-2 sm:py-3 px-3 sm:px-4 rounded-md transition-colors flex items-center justify-center gap-1.5 sm:gap-2 text-sm sm:text-base ${
+                    currentView === 'guest'
+                      ? 'bg-green-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  <Scan className="w-4 h-4 sm:w-5 sm:h-5" />
+                  الضيف
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="flex-1 py-2 sm:py-3 px-3 sm:px-4 rounded-md transition-colors flex items-center justify-center gap-1.5 sm:gap-2 text-sm sm:text-base bg-red-600 text-white hover:bg-red-700"
+                >
+                  تسجيل خروج
+                </button>
+              </div>
+            </div>
 
-        {/* المحتوى الرئيسي */}
-        {currentView === 'organizer' ? <OrganizerView /> : <GuestView />}
+            {/* المحتوى الرئيسي */}
+            {currentView === 'organizer' ? <OrganizerView /> : <GuestView />}
+
+            {eventHistory.length > 0 && (
+              <div className="bg-white rounded-lg shadow-md p-4 mt-6">
+                <h3 className="text-lg font-semibold mb-4">سجل الفعاليات</h3>
+                <ul className="space-y-3">
+                  {eventHistory.map((ev, idx) => (
+                    <li key={idx} className="border-b pb-2">
+                      <p className="font-medium">{ev.eventName}</p>
+                      <p className="text-sm text-gray-600">البريد: {ev.email}</p>
+                      <p className="text-sm text-gray-600">إجمالي الضيوف: {ev.data.totalGuests}, الحاضرون: {ev.data.attendedGuests}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
