@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { QrCode, Users, Scan, CheckCircle, UserPlus, RotateCcw, Settings, Download } from 'lucide-react';
-import { supabase } from './supabaseClient';
 
 // مولد QR Code حقيقي
 const generateQRCode = async (data, size = 200) => {
@@ -26,9 +25,10 @@ const generateQRData = (guestId, eventId, guestCount) => {
 };
 
 const QRAttendanceSystem = () => {
-  const [currentView, setCurrentView] = useState('organizer');
+  const [currentView, setCurrentView] = useState('login');
+  const [userData, setUserData] = useState(null);
   const [eventData, setEventData] = useState({
-    eventId: 'EVENT_' + Math.random().toString(36).substr(2, 9),
+    eventId: '',
     totalGuests: 0,
     attendedGuests: 0,
     guestsList: [],
@@ -37,18 +37,124 @@ const QRAttendanceSystem = () => {
   const [scanResult, setScanResult] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
-  const [user, setUser] = useState(null);
-  const [eventHistory, setEventHistory] = useState([]);
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data.user));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null);
-    });
-    return () => {
-      listener.subscription.unsubscribe();
+  // حفظ واسترجاع البيانات من localStorage
+  const saveUserData = (userCode, data) => {
+    const allData = JSON.parse(localStorage.getItem('qr_attendance_data') || '{}');
+    allData[userCode] = {
+      ...data,
+      lastUpdated: new Date().toISOString()
     };
-  }, []);
+    localStorage.setItem('qr_attendance_data', JSON.stringify(allData));
+  };
+
+  const loadUserData = (userCode) => {
+    const allData = JSON.parse(localStorage.getItem('qr_attendance_data') || '{}');
+    return allData[userCode] || null;
+  };
+
+  // حفظ البيانات تلقائياً عند تغييرها
+  useEffect(() => {
+    if (userData && eventData.eventId) {
+      saveUserData(userData.userCode, {
+        userData,
+        eventData
+      });
+    }
+  }, [userData, eventData]);
+
+  // تسجيل دخول بسيط
+  const LoginForm = () => {
+    const [userCode, setUserCode] = useState('');
+    const [error, setError] = useState('');
+
+    const handleLogin = (e) => {
+      e.preventDefault();
+      if (!userCode.trim()) {
+        setError('يرجى إدخال رمز المستخدم');
+        return;
+      }
+
+      const savedData = loadUserData(userCode);
+      
+      if (savedData) {
+        // تسجيل دخول لمستخدم موجود
+        setUserData(savedData.userData);
+        setEventData(savedData.eventData);
+        setCurrentView('organizer');
+      } else {
+        // إنشاء مستخدم جديد
+        const newUserData = {
+          userCode: userCode,
+          createdAt: new Date().toISOString()
+        };
+        const newEventData = {
+          eventId: 'EVENT_' + Math.random().toString(36).substr(2, 9),
+          totalGuests: 0,
+          attendedGuests: 0,
+          guestsList: [],
+          qrCodes: []
+        };
+        
+        setUserData(newUserData);
+        setEventData(newEventData);
+        setCurrentView('organizer');
+      }
+    };
+
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50" dir="rtl">
+        <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+          <div className="text-center mb-6">
+            <QrCode className="w-16 h-16 mx-auto text-blue-600 mb-4" />
+            <h1 className="text-2xl font-bold text-gray-800">نظام حضور QR</h1>
+            <p className="text-gray-600 mt-2">أدخل رمز المستخدم الخاص بك</p>
+          </div>
+          
+          <form onSubmit={handleLogin} className="space-y-4">
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-800 p-3 rounded-md text-sm">
+                {error}
+              </div>
+            )}
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                رمز المستخدم
+              </label>
+              <input
+                type="text"
+                value={userCode}
+                onChange={(e) => setUserCode(e.target.value)}
+                className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="أدخل رمز المستخدم..."
+                required
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                يمكنك استخدام أي رمز تريده (مثل: احمد123، حفلة_العيد، إلخ)
+              </p>
+            </div>
+            
+            <button
+              type="submit"
+              className="w-full bg-blue-600 text-white py-3 rounded-md hover:bg-blue-700 transition-colors font-medium"
+            >
+              دخول
+            </button>
+          </form>
+          
+          <div className="mt-6 p-4 bg-blue-50 rounded-md">
+            <p className="text-sm text-blue-800">
+              <strong>للمستخدمين الجدد:</strong> أدخل أي رمز تريده وسيتم إنشاء حساب جديد
+            </p>
+            <p className="text-sm text-blue-800 mt-2">
+              <strong>للمستخدمين الحاليين:</strong> أدخل الرمز نفسه لاسترجاع بياناتك
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // توليد QR codes للضيوف
   const generateQRCodes = async (numberOfCodes, guestsPerCode) => {
@@ -64,8 +170,8 @@ const QRAttendanceSystem = () => {
       newGuests.push({
         id: guestId,
         name: `مجموعة ${i}`,
-        attended: 0, // عدد الضيوف الذين حضروا من هذه المجموعة
-        maxGuests: guestsPerCode, // العدد الأقصى للضيوف في هذه المجموعة
+        attended: 0,
+        maxGuests: guestsPerCode,
         qrCode: qrData,
         qrImageUrl: qrImageUrl,
         isEditing: false,
@@ -148,112 +254,52 @@ const QRAttendanceSystem = () => {
 
   // إعادة تعيين النظام
   const resetSystem = () => {
-    setEventData({
-      eventId: 'EVENT_' + Math.random().toString(36).substr(2, 9),
-      totalGuests: 0,
-      attendedGuests: 0,
-      guestsList: [],
-      qrCodes: []
-    });
-    setScanResult('');
-    setShowScanner(false);
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-  };
-
-  const endEvent = async () => {
-    const email = prompt('أدخل بريدك الإلكتروني لتأكيد إنهاء الفعالية');
-    const name = prompt('أدخل اسم الفعالية المنتهية');
-    if (!email || !name) return;
-    if (email !== user?.email) {
-      alert('البريد الإلكتروني لا يتطابق مع الحساب الحالي');
-      return;
+    const confirmReset = window.confirm('هل أنت متأكد من إعادة تعيين جميع البيانات؟');
+    if (confirmReset) {
+      setEventData({
+        eventId: 'EVENT_' + Math.random().toString(36).substr(2, 9),
+        totalGuests: 0,
+        attendedGuests: 0,
+        guestsList: [],
+        qrCodes: []
+      });
+      setScanResult('');
+      setShowScanner(false);
     }
-    const { error } = await supabase.from('event_history').insert({
-      email,
-      event_name: name,
-      event_id: eventData.eventId,
-      total_guests: eventData.totalGuests,
-      attended_guests: eventData.attendedGuests,
-      guests: eventData.guestsList,
-      ended_at: new Date().toISOString()
-    });
-    if (error) {
-      console.error('خطأ في حفظ الحدث:', error);
-      alert('حدث خطأ أثناء حفظ البيانات');
-      return;
-    }
-    setEventHistory(prev => [...prev, { email, eventName: name, data: eventData }]);
-    resetSystem();
   };
 
-  const AuthForm = () => {
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [isSignUp, setIsSignUp] = useState(false);
-    const [error, setError] = useState(null);
-
-    const handleSubmit = async (e) => {
-      e.preventDefault();
-      setError(null);
-      const { error } = isSignUp
-        ? await supabase.auth.signUp({ email, password })
-        : await supabase.auth.signInWithPassword({ email, password });
-      if (error) setError(error.message);
-    };
-
-    return (
-      <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-md space-y-4 max-w-md mx-auto mt-10">
-        <h2 className="text-xl font-bold text-center">{isSignUp ? 'إنشاء حساب' : 'تسجيل الدخول'}</h2>
-        {error && <p className="text-red-600 text-center">{error}</p>}
-        <input
-          type="email"
-          placeholder="البريد الإلكتروني"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="w-full p-2 border rounded"
-          required
-        />
-        <input
-          type="password"
-          placeholder="كلمة المرور"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full p-2 border rounded"
-          required
-        />
-        <button type="submit" className="w-full bg-blue-600 text-white py-2 rounded">
-          {isSignUp ? 'إنشاء' : 'دخول'}
-        </button>
-        <button
-          type="button"
-          onClick={() => setIsSignUp(!isSignUp)}
-          className="text-sm text-blue-600 underline block mx-auto"
-        >
-          {isSignUp ? 'لديك حساب؟ سجل الدخول' : 'ليس لديك حساب؟ أنشئ واحداً'}
-        </button>
-      </form>
-    );
+  const handleLogout = () => {
+    const confirmLogout = window.confirm('هل تريد تسجيل الخروج؟');
+    if (confirmLogout) {
+      setUserData(null);
+      setEventData({
+        eventId: '',
+        totalGuests: 0,
+        attendedGuests: 0,
+        guestsList: [],
+        qrCodes: []
+      });
+      setCurrentView('login');
+    }
   };
 
   // واجهة منظم الحفلة
   const OrganizerView = () => {
-  const [totalCodes, setTotalCodes] = useState(5); // عدد رموز QR
-  const [guestsPerCode, setGuestsPerCode] = useState(2); // عدد الضيوف لكل رمز
-  const [isGenerating, setIsGenerating] = useState(false);
-  
-  const handleGenerateQRCodes = async () => {
-    setIsGenerating(true);
-    await generateQRCodes(totalCodes, guestsPerCode);
-    setIsGenerating(false);
-  };    return (
+    const [totalCodes, setTotalCodes] = useState(5);
+    const [guestsPerCode, setGuestsPerCode] = useState(2);
+    const [isGenerating, setIsGenerating] = useState(false);
+    
+    const handleGenerateQRCodes = async () => {
+      setIsGenerating(true);
+      await generateQRCodes(totalCodes, guestsPerCode);
+      setIsGenerating(false);
+    };
+
+    return (
       <div className="space-y-6">
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 rounded-lg">
-          <h2 className="text-2xl font-bold mb-2">لوحة تحكم منظم الحفلة</h2>
-          <p className="opacity-90">إنشاء وإدارة رموز QR للضيوف</p>
+          <h2 className="text-2xl font-bold mb-2">مرحباً {userData.userCode}</h2>
+          <p className="opacity-90">لوحة تحكم منظم الحفلة</p>
         </div>
         
         {eventData.totalGuests === 0 ? (
@@ -372,7 +418,6 @@ const QRAttendanceSystem = () => {
                   تحميل الكل
                 </button>
               </div>
-              <p className="text-sm text-gray-600 mb-4">يمكنك تحميل رموز QR لطباعتها وتوزيعها على الضيوف</p>
               
               {/* معاينة QR Codes */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 max-h-[calc(100vh-300px)] overflow-y-auto p-1">
@@ -473,7 +518,6 @@ const QRAttendanceSystem = () => {
             <div className="bg-white rounded-lg shadow-md border">
               <div className="p-3 sm:p-4 border-b">
                 <h3 className="text-base sm:text-lg font-semibold">قائمة الضيوف</h3>
-                <p className="text-xs sm:text-sm text-gray-500 mt-1">اضغط على اسم المجموعة لتعديله</p>
               </div>
               <div className="max-h-60 overflow-y-auto">
                 {eventData.guestsList.map((guest, index) => (
@@ -488,18 +532,16 @@ const QRAttendanceSystem = () => {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-xs px-2 py-1 rounded-full flex items-center gap-1 ${
-                          guest.attended === guest.maxGuests 
-                            ? 'bg-green-100 text-green-800'
-                            : guest.attended > 0
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-orange-100 text-orange-800'
-                        }`}>
-                          {guest.attended === guest.maxGuests && <CheckCircle className="w-3 h-3" />}
-                          {guest.attended} / {guest.maxGuests} ضيوف
-                        </span>
-                      </div>
+                      <span className={`text-xs px-2 py-1 rounded-full flex items-center gap-1 ${
+                        guest.attended === guest.maxGuests 
+                          ? 'bg-green-100 text-green-800'
+                          : guest.attended > 0
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-orange-100 text-orange-800'
+                      }`}>
+                        {guest.attended === guest.maxGuests && <CheckCircle className="w-3 h-3" />}
+                        {guest.attended} / {guest.maxGuests} ضيوف
+                      </span>
                       <button
                         onClick={() => downloadQRCode(guest)}
                         className="text-blue-600 hover:bg-blue-50 p-1 rounded text-xs"
@@ -515,13 +557,6 @@ const QRAttendanceSystem = () => {
 
             {/* أزرار التحكم */}
             <div className="flex gap-3">
-              <button
-                onClick={endEvent}
-                className="flex-1 bg-green-600 text-white px-4 py-3 rounded-md hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
-              >
-                <CheckCircle className="w-5 h-5" />
-                إنهاء الفعالية
-              </button>
               <button
                 onClick={resetSystem}
                 className="flex-1 bg-red-600 text-white px-4 py-3 rounded-md hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
@@ -573,7 +608,8 @@ const QRAttendanceSystem = () => {
           }
         };
       }
-    }, [showScanner, handleScan, handleError]);
+    }, [showScanner]);
+
     return (
       <div className="space-y-6">
         <div className="bg-gradient-to-r from-green-600 to-teal-600 text-white p-6 rounded-lg">
@@ -613,14 +649,16 @@ const QRAttendanceSystem = () => {
                     ✕
                   </button>
                 </div>
-                {scanResult && (
-                  <div className={`p-4 rounded-md ${
-                    scanResult.includes('بنجاح') 
-                      ? 'bg-green-50 border border-green-200 text-green-800' 
-                      : scanResult.includes('غير صالح') || scanResult.includes('مسبقاً')
-                      ? 'bg-red-50 border border-red-200 text-red-800'
-                      : 'bg-blue-50 border border-blue-200 text-blue-800'
-                  }`}>
+                                {scanResult && (
+                  <div
+                    className={`p-4 rounded-md ${
+                      scanResult.includes('بنجاح')
+                        ? 'bg-green-50 border border-green-200 text-green-800'
+                        : scanResult.includes('غير صالح') || scanResult.includes('مسبقاً')
+                        ? 'bg-red-50 border border-red-200 text-red-800'
+                        : 'bg-blue-50 border border-blue-200 text-blue-800'
+                    }`}
+                  >
                     <div className="flex items-center justify-center gap-2">
                       {isScanning ? (
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
@@ -655,8 +693,8 @@ const QRAttendanceSystem = () => {
   return (
     <div className="min-h-screen bg-gray-50 p-2 sm:p-4" dir="rtl">
       <div className="max-w-7xl mx-auto">
-        {!user ? (
-          <AuthForm />
+        {currentView === 'login' ? (
+          <LoginForm />
         ) : (
           <>
             {/* شريط التنقل */}
@@ -695,21 +733,6 @@ const QRAttendanceSystem = () => {
 
             {/* المحتوى الرئيسي */}
             {currentView === 'organizer' ? <OrganizerView /> : <GuestView />}
-
-            {eventHistory.length > 0 && (
-              <div className="bg-white rounded-lg shadow-md p-4 mt-6">
-                <h3 className="text-lg font-semibold mb-4">سجل الفعاليات</h3>
-                <ul className="space-y-3">
-                  {eventHistory.map((ev, idx) => (
-                    <li key={idx} className="border-b pb-2">
-                      <p className="font-medium">{ev.eventName}</p>
-                      <p className="text-sm text-gray-600">البريد: {ev.email}</p>
-                      <p className="text-sm text-gray-600">إجمالي الضيوف: {ev.data.totalGuests}, الحاضرون: {ev.data.attendedGuests}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </>
         )}
       </div>
