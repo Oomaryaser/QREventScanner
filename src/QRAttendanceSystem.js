@@ -1,7 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
-import { QrCode, Users, Scan, CheckCircle, RotateCcw, Settings, Download, PlusCircle } from 'lucide-react';
+import { QrCode, Users, CheckCircle, RotateCcw, Settings, Download, PlusCircle } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 // مفتاح آخر رمز مستخدم
@@ -54,7 +53,6 @@ const QRAttendanceSystem = () => {
   });
 
   const [scanResult, setScanResult] = useState('');
-  const [showScanner, setShowScanner] = useState(false);
   const [showAppendPanel, setShowAppendPanel] = useState(false);
 
   // ===== مصادقة مبسطة =====
@@ -362,7 +360,8 @@ const QRAttendanceSystem = () => {
       const seq = storeData.guestsList.length + i;
       const groupId = `GROUP_${seq}_${Math.random().toString(36).substr(2, 6)}`;
       const qrData = generateQRData(userData.userCode, groupId, guestsPerCode);
-      const qrImageUrl = await generateQRCode(qrData);
+      const link = `${window.location.origin}?qr=${encodeURIComponent(qrData)}`;
+      const qrImageUrl = await generateQRCode(link);
       newGuests.push({
         id: groupId,
         name: `مجموعة ${seq}`,
@@ -430,6 +429,18 @@ const QRAttendanceSystem = () => {
     }
   };
 
+
+  // ===== معالجة الروابط مع qr =====
+  useEffect(() => {
+    if (!userData) return;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('qr');
+    if (code) {
+      handleScan(code);
+      params.delete('qr');
+      const newQuery = params.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${newQuery ? '?' + newQuery : ''}`);
+    }
   // ===== أدوات مساعدة للكاميرا =====
   const isSecureContextOk = () => {
     if (typeof window === 'undefined') return false;
@@ -521,7 +532,7 @@ const QRAttendanceSystem = () => {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showScanner]);
+  }, [userData, storeData]);
 
   // ===== إعادة تعيين (يمسح كل شيء من قاعدة البيانات) =====
   const resetSystem = async () => {
@@ -538,7 +549,6 @@ const QRAttendanceSystem = () => {
       // امسح الحالة الحالية
       setStoreData({ totalGuests: 0, attendedGuests: 0, guestsList: [] });
       setScanResult('');
-      setShowScanner(false);
       alert('تم حذف جميع بيانات المستخدم من قاعدة البيانات.');
     } catch (e) {
       console.error('فشل الحذف:', e?.message);
@@ -645,14 +655,6 @@ const QRAttendanceSystem = () => {
               </button>
 
               <button
-                onClick={() => { setScanResult(''); setShowScanner(true); }}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-              >
-                <Scan className="w-4 h-4" />
-                بدء المسح بالكاميرا
-              </button>
-
-              <button
                 onClick={resetSystem}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors"
               >
@@ -660,6 +662,10 @@ const QRAttendanceSystem = () => {
                 إعادة التعيين (حذف كلي)
               </button>
             </div>
+
+            <p className="mt-4 text-sm text-gray-600">
+              استخدم كاميرا هاتفك لمسح رمز QR؛ سيفتح الرابط ويسجل الحضور تلقائياً.
+            </p>
 
             <button
               onClick={handleLogout}
@@ -797,26 +803,6 @@ const QRAttendanceSystem = () => {
           </div>
         )}
 
-        {/* نافذة الماسح بالكاميرا */}
-        {showScanner && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white w-full max-w-lg rounded-lg shadow-xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h5 className="font-semibold">المسح بالكاميرا</h5>
-                <button
-                  onClick={() => setShowScanner(false)}
-                  className="px-3 py-1 rounded-md border hover:bg-gray-50"
-                >
-                  إغلاق
-                </button>
-              </div>
-              <div id="qr-scanner" className="w-full" />
-              <p className="mt-3 text-sm text-gray-600">
-                وجّه الكود نحو الكاميرا لتسجيل الحضور تلقائياً.
-              </p>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
