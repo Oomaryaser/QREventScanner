@@ -439,7 +439,7 @@ const QRAttendanceSystem = () => {
   };
 
   const checkCameraAccess = async () => {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       return { ok: false, reason: 'متصفحك لا يدعم mediaDevices' };
     }
     try {
@@ -450,14 +450,16 @@ const QRAttendanceSystem = () => {
         }
       }
     } catch (_) {}
+
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videos = devices.filter(d => d.kind === 'videoinput');
-      if (videos.length === 0) return { ok: false, reason: 'لا توجد كاميرا متاحة على هذا الجهاز.' };
+      // اطلب إذن الكاميرا مباشرةً، هذا ضروري خاصة على أجهزة iOS
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // أوقف كل التراكات فوراً حتى لا تظل الكاميرا مفتوحة
+      stream.getTracks().forEach(t => t.stop());
+      return { ok: true };
     } catch (_) {
-      return { ok: false, reason: 'تعذر فحص الأجهزة. قد تكون الصلاحيات مرفوضة.' };
+      return { ok: false, reason: 'تعذر الوصول إلى الكاميرا. تحقق من الصلاحيات.' };
     }
-    return { ok: true };
   };
 
   const prepareScannerContainer = () => {
@@ -492,7 +494,13 @@ const QRAttendanceSystem = () => {
       }
 
       try {
-        const config = { fps: 10, qrbox: { width: 280, height: 280 }, rememberLastUsedCamera: true };
+        const config = {
+          fps: 10,
+          qrbox: { width: 280, height: 280 },
+          rememberLastUsedCamera: true,
+          // استخدام الكاميرا الخلفية على الهواتف
+          videoConstraints: { facingMode: { ideal: 'environment' } }
+        };
         scannerInstance = new Html5QrcodeScanner('qr-scanner', config, false);
         scannerInstance.render(
           (decodedText) => handleScan(decodedText),
