@@ -1,7 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
-import { QrCode, Users, Scan, CheckCircle, RotateCcw, Settings, Download, PlusCircle } from 'lucide-react';
+import { QrCode, Users, CheckCircle, RotateCcw, Settings, Download, PlusCircle } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
 // مفتاح آخر رمز مستخدم
@@ -54,7 +53,6 @@ const QRAttendanceSystem = () => {
   });
 
   const [scanResult, setScanResult] = useState('');
-  const [showScanner, setShowScanner] = useState(false);
   const [showAppendPanel, setShowAppendPanel] = useState(false);
 
   // ===== مصادقة مبسطة =====
@@ -362,7 +360,8 @@ const QRAttendanceSystem = () => {
       const seq = storeData.guestsList.length + i;
       const groupId = `GROUP_${seq}_${Math.random().toString(36).substr(2, 6)}`;
       const qrData = generateQRData(userData.userCode, groupId, guestsPerCode);
-      const qrImageUrl = await generateQRCode(qrData);
+      const link = `${window.location.origin}?qr=${encodeURIComponent(qrData)}`;
+      const qrImageUrl = await generateQRCode(link);
       newGuests.push({
         id: groupId,
         name: `مجموعة ${seq}`,
@@ -430,90 +429,19 @@ const QRAttendanceSystem = () => {
     }
   };
 
-  // ===== أدوات مساعدة للكاميرا =====
-  const isSecureContextOk = () => {
-    if (typeof window === 'undefined') return false;
-    const isHttps = window.location.protocol === 'https:';
-    const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-    return isHttps || isLocalhost;
-  };
-
-  const checkCameraAccess = async () => {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
-      return { ok: false, reason: 'متصفحك لا يدعم mediaDevices' };
-    }
-    try {
-      if (navigator.permissions?.query) {
-        const status = await navigator.permissions.query({ name: 'camera' });
-        if (status.state === 'denied') {
-          return { ok: false, reason: 'تم رفض إذن الكاميرا. اسمح بها من إعدادات الموقع.' };
-        }
-      }
-    } catch (_) {}
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videos = devices.filter(d => d.kind === 'videoinput');
-      if (videos.length === 0) return { ok: false, reason: 'لا توجد كاميرا متاحة على هذا الجهاز.' };
-    } catch (_) {
-      return { ok: false, reason: 'تعذر فحص الأجهزة. قد تكون الصلاحيات مرفوضة.' };
-    }
-    return { ok: true };
-  };
-
-  const prepareScannerContainer = () => {
-    const el = document.getElementById('qr-scanner');
-    if (!el) return { ok: false, reason: 'عنصر qr-scanner غير موجود' };
-    el.style.minHeight = '280px';
-    el.style.display = 'block';
-    el.innerHTML = '';
-    return { ok: true };
-  };
-
-  // تهيئة الماسح
+  // ===== معالجة الروابط مع qr =====
   useEffect(() => {
-    let scannerInstance = null;
-
-    const startScanner = async () => {
-      if (!showScanner) return;
-
-      if (!isSecureContextOk()) {
-        setScanResult('لا يمكن فتح الكاميرا: يجب تشغيل الصفحة عبر HTTPS أو على localhost.');
-        return;
-      }
-      const camCheck = await checkCameraAccess();
-      if (!camCheck.ok) {
-        setScanResult(`لا يمكن فتح الكاميرا: ${camCheck.reason}`);
-        return;
-      }
-      const prep = prepareScannerContainer();
-      if (!prep.ok) {
-        setScanResult(`تعذر بدء الماسح: ${prep.reason}`);
-        return;
-      }
-
-      try {
-        const config = { fps: 10, qrbox: { width: 280, height: 280 }, rememberLastUsedCamera: true };
-        scannerInstance = new Html5QrcodeScanner('qr-scanner', config, false);
-        scannerInstance.render(
-          (decodedText) => handleScan(decodedText),
-          (_err) => { /* تجاهل أخطاء المسح المتكررة */ }
-        );
-        setScanResult('افتح الكود أمام الكاميرا…');
-      } catch (e) {
-        console.error('فشل إنشاء/تشغيل الماسح:', e);
-        setScanResult('تعذر تشغيل الكاميرا. تحقق من الأذونات أو جرّب متصفحاً آخر.');
-      }
-    };
-
-    startScanner();
-
-    return () => {
-      if (scannerInstance) {
-        try { scannerInstance.clear(); } catch (_) {}
-      }
-    };
+    if (!userData) return;
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('qr');
+    if (code) {
+      handleScan(code);
+      params.delete('qr');
+      const newQuery = params.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${newQuery ? '?' + newQuery : ''}`);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showScanner]);
+  }, [userData, storeData]);
 
   // ===== إعادة تعيين (يمسح كل شيء من قاعدة البيانات) =====
   const resetSystem = async () => {
@@ -530,7 +458,6 @@ const QRAttendanceSystem = () => {
       // امسح الحالة الحالية
       setStoreData({ totalGuests: 0, attendedGuests: 0, guestsList: [] });
       setScanResult('');
-      setShowScanner(false);
       alert('تم حذف جميع بيانات المستخدم من قاعدة البيانات.');
     } catch (e) {
       console.error('فشل الحذف:', e?.message);
@@ -637,14 +564,6 @@ const QRAttendanceSystem = () => {
               </button>
 
               <button
-                onClick={() => { setScanResult(''); setShowScanner(true); }}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-              >
-                <Scan className="w-4 h-4" />
-                بدء المسح بالكاميرا
-              </button>
-
-              <button
                 onClick={resetSystem}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors"
               >
@@ -652,6 +571,10 @@ const QRAttendanceSystem = () => {
                 إعادة التعيين (حذف كلي)
               </button>
             </div>
+
+            <p className="mt-4 text-sm text-gray-600">
+              استخدم كاميرا هاتفك لمسح رمز QR؛ سيفتح الرابط ويسجل الحضور تلقائياً.
+            </p>
 
             <button
               onClick={handleLogout}
@@ -789,26 +712,6 @@ const QRAttendanceSystem = () => {
           </div>
         )}
 
-        {/* نافذة الماسح بالكاميرا */}
-        {showScanner && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white w-full max-w-lg rounded-lg shadow-xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h5 className="font-semibold">المسح بالكاميرا</h5>
-                <button
-                  onClick={() => setShowScanner(false)}
-                  className="px-3 py-1 rounded-md border hover:bg-gray-50"
-                >
-                  إغلاق
-                </button>
-              </div>
-              <div id="qr-scanner" className="w-full" />
-              <p className="mt-3 text-sm text-gray-600">
-                وجّه الكود نحو الكاميرا لتسجيل الحضور تلقائياً.
-              </p>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
