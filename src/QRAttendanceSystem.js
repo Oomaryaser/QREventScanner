@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { QrCode, Users, CheckCircle, RotateCcw, Settings, Download, PlusCircle } from 'lucide-react';
 import { supabase } from './supabaseClient';
-
+import { Html5QrcodeScanner } from 'html5-qrcode';
 // مفتاح آخر رمز مستخدم
 const LAST_USER_KEY = 'qr_last_user_code';
 
@@ -54,6 +54,7 @@ const QRAttendanceSystem = () => {
 
   const [scanResult, setScanResult] = useState('');
   const [showAppendPanel, setShowAppendPanel] = useState(false);
+const [showScanner, setShowScanner] = useState(false);
 
   // ===== مصادقة مبسطة =====
   const authenticateUser = async (_userCode) => {
@@ -431,16 +432,20 @@ const QRAttendanceSystem = () => {
 
 
   // ===== معالجة الروابط مع qr =====
-  useEffect(() => {
-    if (!userData) return;
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('qr');
-    if (code) {
-      handleScan(code);
-      params.delete('qr');
-      const newQuery = params.toString();
-      window.history.replaceState({}, '', `${window.location.pathname}${newQuery ? '?' + newQuery : ''}`);
-    }
+  // ===== معالجة الروابط مع qr =====
+useEffect(() => {
+  if (!userData) return;
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('qr');
+  if (code) {
+    handleScan(code);
+    params.delete('qr');
+    const newQuery = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${newQuery ? '?' + newQuery : ''}`);
+  }
+}, [userData]);
+// ===== أدوات مساعدة للكاميرا =====
+
   // ===== أدوات مساعدة للكاميرا =====
   const isSecureContextOk = () => {
     if (typeof window === 'undefined') return false;
