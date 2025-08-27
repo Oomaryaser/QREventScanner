@@ -34,13 +34,35 @@ const generateQRData = (userCode, groupId, guestCount, phone, displayNameEnc) =>
 
 // ===== Parsing بسيط لسلسلة QR =====
 const parseQRData = (str) => {
-  const parts = (str || '').split('|');
-  const obj = {};
-  for (const p of parts) {
-    const [k, ...rest] = p.split(':');
-    obj[k] = rest.join(':'); // يدعم وجود : في القيم
+  try {
+    // إذا كان JSON، حاول تحليله
+    if (str.trim().startsWith('{') && str.trim().endsWith('}')) {
+      try {
+        return JSON.parse(str);
+      } catch (e) {
+        console.log('Not valid JSON, continuing with normal parsing');
+      }
+    }
+
+    // التحليل العادي بالفصل |
+    const parts = (str || '').split('|');
+    const obj = {};
+    for (const p of parts) {
+      if (!p.includes(':')) continue; // تخطي الأجزاء التي لا تحتوي على :
+      const [k, ...rest] = p.split(':');
+      const key = k.trim(); // إزالة المسافات
+      if (key) {
+        obj[key] = rest.join(':').trim(); // يدعم وجود : في القيم
+      }
+    }
+    
+    console.log('Parsed Data:', obj); // للتشخيص
+    return obj;
+  } catch (error) {
+    console.error('Error parsing QR data:', error);
+    console.log('Original string:', str);
+    return null;
   }
-  return obj; // {USER, GUEST, COUNT, PHONE, NAME, TIME}
 };
 
 const fmtDateTimeLocal = (iso) => {
@@ -73,6 +95,60 @@ const QRAttendanceSystem = () => {
 
   const [scanResult, setScanResult] = useState('');
   const [showAppendPanel, setShowAppendPanel] = useState(false);
+  const [scanning, setScanning] = useState(false);
+
+  // وظيفة معالجة مسح QR
+  const onScanSuccess = async (decodedText) => {
+    try {
+      setScanning(true);
+      setScanResult('جاري التحقق من البطاقة...');
+
+      // تحليل البيانات من رمز QR
+      const data = parseQRData(decodedText);
+      
+      // التحقق من صحة البيانات
+      if (!data || (!data.TICKET && !data.USER)) {
+        setScanResult('هذا الرمز لا يحتوي على بيانات صالحة');
+        console.log('بيانات QR:', decodedText); // للتشخيص
+        return;
+      }
+
+      // معالجة بطاقة الدخول
+      if (data.TICKET) {
+        const result = await validateTicket(decodedText);
+        setScanResult(result.message);
+        if (result.success) {
+          setShowAppendPanel(true);
+          setTimeout(() => setShowAppendPanel(false), 3000);
+        }
+      } 
+      // معالجة رمز المستخدم القديم
+      else if (data.USER) {
+        const group = storeData.guestsList.find(g => g.id === data.GUEST);
+        if (group) {
+          if (group.attended < group.maxGuests) {
+            setStoreData(prev => ({
+              ...prev,
+              attendedGuests: prev.attendedGuests + 1,
+              guestsList: prev.guestsList.map(g =>
+                g.id === data.GUEST ? { ...g, attended: g.attended + 1 } : g
+              )
+            }));
+            setScanResult(`تم تسجيل حضور ضيف من مجموعة ${group.name}`);
+          } else {
+            setScanResult('تم الوصول للحد الأقصى من الضيوف لهذه المجموعة');
+          }
+        } else {
+          setScanResult('مجموعة الضيوف غير موجودة');
+        }
+      }
+    } catch (error) {
+      console.error('خطأ في معالجة QR:', error);
+      setScanResult('حدث خطأ في معالجة رمز QR: ' + error.message);
+    } finally {
+      setScanning(false);
+    }
+  };
   // ===== Routing بدائي: /invite => InviteView
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -694,30 +770,76 @@ const extractQRPayload = (input) => {
   // ===== مسح QR =====
 const handleScan = async (data) => {
   if (!data) return;
-  setScanResult('جاري التحقق من الرمز...');
+  try {
+    console.log('Raw QR Data:', data); // للتشخيص
+    setScanResult('جاري التحقق من الرمز...');
 
-  // ✅ دعم الروابط
-  const payload = extractQRPayload(data);
+    // ✅ دعم الروابط
+    const payload = extractQRPayload(data);
+    console.log('Extracted Payload:', payload); // للتشخيص
 
-  const group = storeData.guestsList.find(g => g.qrCode === payload);
-  if (group) {
-    if (group.attended < group.maxGuests) {
-      const updatedGuests = storeData.guestsList.map(g =>
-        g.id === group.id ? { ...g, attended: g.attended + 1 } : g
-      );
-      const newData = {
-        ...storeData,
-        guestsList: updatedGuests,
-        attendedGuests: storeData.attendedGuests + 1,
-      };
-      setStoreData(newData);
-      setScanResult(`تم تسجيل حضور ضيف من ${group.name}!`);
-      await supabaseUpsert(userData.userCode, newData);
-    } else {
-      setScanResult('تم بلوغ الحد الأقصى لهذه المجموعة.');
+    // محاولة تحليل البيانات كـ JSON
+    try {
+      const jsonData = JSON.parse(payload);
+      console.log('Parsed JSON:', jsonData); // للتشخيص
+      if (jsonData && typeof jsonData === 'object') {
+        data = payload; // استخدم البيانات المستخرجة
+      }
+    } catch (e) {
+      // ليس JSON، استمر مع معالجة النص العادي
     }
-  } else {
-    setScanResult('QR Code غير صالح');
+
+    // تحليل البيانات
+    const parsedData = parseQRData(data);
+    console.log('Parsed QR Data:', parsedData); // للتشخيص
+
+    if (!parsedData || Object.keys(parsedData).length === 0) {
+      setScanResult('لم يتم العثور على بيانات صالحة في رمز QR');
+      return;
+    }
+
+    // التحقق من نوع البطاقة
+    if (parsedData.TICKET) {
+      // بطاقة دخول جديدة
+      const result = await validateTicket(data);
+      setScanResult(result.message);
+      if (result.success) {
+        setShowAppendPanel(true);
+        setTimeout(() => setShowAppendPanel(false), 3000);
+        // تحديث قائمة الحضور
+        setStoreData(prev => ({
+          ...prev,
+          attendedGuests: prev.attendedGuests + 1
+        }));
+      }
+    } else if (parsedData.USER) {
+      // رمز QR تقليدي
+      const group = storeData.guestsList.find(g => g.id === parsedData.GUEST);
+      if (group) {
+        if (group.attended < group.maxGuests) {
+          const updatedGuests = storeData.guestsList.map(g =>
+            g.id === group.id ? { ...g, attended: g.attended + 1 } : g
+          );
+          const newData = {
+            ...storeData,
+            guestsList: updatedGuests,
+            attendedGuests: storeData.attendedGuests + 1,
+          };
+          setStoreData(newData);
+          setScanResult(`تم تسجيل حضور ضيف من ${group.name}!`);
+          await supabaseUpsert(userData.userCode, newData);
+        } else {
+          setScanResult('تم بلوغ الحد الأقصى لهذه المجموعة.');
+        }
+      } else {
+        setScanResult('هذا الرمز غير مرتبط بأي مجموعة معروفة');
+      }
+    } else {
+      setScanResult('نوع رمز QR غير معروف أو غير صالح');
+    }
+  } catch (error) {
+    console.error('Error processing QR:', error);
+    setScanResult('حدث خطأ في معالجة رمز QR: ' + error.message);
   }
 };
 
