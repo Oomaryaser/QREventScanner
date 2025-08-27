@@ -72,12 +72,11 @@ const QRAttendanceSystem = () => {
   // إزالة showScanner لأننا لن نستخدم الماسح المدمج
   // const [showScanner, setShowScanner] = useState(false);
 
-  // ===== Routing بدائي: /invite => InviteView, /qr-display => QRDisplayView
+  // ===== Routing بدائي: /qr-display => QRDisplayView، الباقي في الصفحة الرئيسية
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const path = window.location.pathname || '/';
-    if (path.startsWith('/invite')) setRoute('invite');
-    else if (path.startsWith('/qr-display')) setRoute('qr-display');
+    if (path.startsWith('/qr-display')) setRoute('qr-display');
     else setRoute('app');
   }, []);
 
@@ -447,14 +446,14 @@ const QRAttendanceSystem = () => {
   const exportCSV = () => {
     if (!storeData.guestsList.length) return alert("لا توجد بيانات لتصديرها.");
 
-    const headers = ["الاسم", "رقم الهاتف", "عدد الضيوف", "QR Code", "رابط الدعوة"];
+    const headers = ["الاسم", "رقم الهاتف", "عدد الضيوف", "QR Code", "رابط عرض QR"];
     
     const rows = storeData.guestsList.map(g => [
       (g.name || '').replace(/,/g, ' '),
       `"${g.phone || ''}"`,
       g.maxGuests ?? 0,
       (g.qrCode || '').replace(/,/g, ' '),
-      g.inviteUrl || `https://qr-event-scanner2.vercel.app/?qr=${g.qrCode || ''}`
+      `https://qr-event-scanner2.vercel.app/qr-display?guest=${encodeURIComponent(g.id)}`
     ]);
 
     const csvLines = [headers, ...rows].map(cols => cols.join(',')).join('\n');
@@ -727,16 +726,22 @@ const QRAttendanceSystem = () => {
     }
   };
 
-  // معالجة qr بالروابط من كاميرا الموبايل
+  // معالجة qr بالروابط من كاميرا الموبايل في الصفحة الرئيسية
   useEffect(() => {
-    if (route !== 'app' || !userData) return;
+    if (route !== 'app') return;
     const params = new URLSearchParams(window.location.search);
     const code = params.get('qr');
     if (code) {
-      handleScan(code);
-      params.delete('qr');
-      const newQuery = params.toString();
-      window.history.replaceState({}, '', `${window.location.pathname}${newQuery ? '?' + newQuery : ''}`);
+      // إذا كان المستخدم مسجل دخول، عامل الكود كمسح عادي
+      if (userData) {
+        handleScan(code);
+        params.delete('qr');
+        const newQuery = params.toString();
+        window.history.replaceState({}, '', `${window.location.pathname}${newQuery ? '?' + newQuery : ''}`);
+      } else {
+        // إذا لم يكن مسجل دخول، اعرض واجهة الدعوة
+        setRoute('invite');
+      }
     }
   }, [route, userData]);
 
@@ -1301,6 +1306,8 @@ const QRAttendanceSystem = () => {
   const QRDisplayView = () => {
     const [guestData, setGuestData] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [eventReady, setEventReady] = useState(false);
+    const [ownerData, setOwnerData] = useState(null);
 
     useEffect(() => {
       const loadGuestData = async () => {
@@ -1321,16 +1328,29 @@ const QRAttendanceSystem = () => {
           if (error) throw error;
 
           let foundGuest = null;
+          let foundOwner = null;
           for (const user of users || []) {
             const guests = user.guests || [];
             const guest = guests.find(g => g.id === decodeURIComponent(guestId));
             if (guest) {
               foundGuest = guest;
+              foundOwner = user;
               break;
             }
           }
 
           setGuestData(foundGuest);
+          setOwnerData(foundOwner);
+          
+          // فحص وقت الحدث
+          if (foundOwner?.event_time) {
+            const eventTime = new Date(foundOwner.event_time);
+            const now = new Date();
+            const thirtyMinsBefore = new Date(eventTime.getTime() - 30 * 60 * 1000);
+            setEventReady(now >= thirtyMinsBefore);
+          } else {
+            setEventReady(true); // إذا لم يحدد وقت، اعرض QR
+          }
         } catch (error) {
           console.error('خطأ في تحميل بيانات الضيف:', error);
         }
@@ -1374,32 +1394,53 @@ const QRAttendanceSystem = () => {
 
             {/* Content */}
             <div className="p-8">
-              <div className="text-center mb-8">
-                <div className="mb-6">
-                  {guestData.qrImageUrl && (
-                    <img 
-                      src={guestData.qrImageUrl} 
-                      alt={`QR Code ${guestData.name}`} 
-                      className="w-80 h-80 mx-auto border-4 border-gray-200 rounded-xl shadow-lg"
-                    />
-                  )}
-                </div>
-                
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-                  <p className="text-green-800 font-medium text-lg mb-2">معلومات الدعوة</p>
-                  <div className="text-green-700 space-y-2">
-                    <p>📱 الهاتف: {guestData.phone || 'غير محدد'}</p>
-                    <p>👥 عدد الضيوف: {guestData.maxGuests}</p>
-                    <p>✅ حضر: {guestData.attended || 0}</p>
-                    <p>🎫 كود المجموعة: {guestData.id}</p>
+              {eventReady ? (
+                <div className="text-center mb-8">
+                  <div className="mb-6">
+                    {guestData.qrImageUrl && (
+                      <img 
+                        src={guestData.qrImageUrl} 
+                        alt={`QR Code ${guestData.name}`} 
+                        className="w-80 h-80 mx-auto border-4 border-gray-200 rounded-xl shadow-lg"
+                      />
+                    )}
+                  </div>
+                  
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+                    <p className="text-green-800 font-medium text-lg mb-2">معلومات الدعوة</p>
+                    <div className="text-green-700 space-y-2">
+                      <p>📱 الهاتف: {guestData.phone || 'غير محدد'}</p>
+                      <p>👥 عدد الضيوف: {guestData.maxGuests}</p>
+                      <p>✅ حضر: {guestData.attended || 0}</p>
+                      <p>🎫 كود المجموعة: {guestData.id}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-blue-800 font-medium">تعليمات للحارس</p>
+                    <p className="text-blue-700 text-sm mt-1">امسح هذا الرمز بكاميرا الموبايل لتسجيل الحضور</p>
                   </div>
                 </div>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <p className="text-blue-800 font-medium">تعليمات للحارس</p>
-                  <p className="text-blue-700 text-sm mt-1">امسح هذا الرمز بكاميرا الموبايل لتسجيل الحضور</p>
+              ) : (
+                <div className="text-center mb-8">
+                  <Clock className="w-20 h-20 mx-auto text-amber-500 mb-6" />
+                  <h2 className="text-2xl font-semibold text-gray-800 mb-4">لم يحن الوقت بعد</h2>
+                  <p className="text-gray-600 text-lg mb-4">سيظهر رمز QR قبل موعد الفعالية بنصف ساعة</p>
+                  
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <p className="text-amber-800 font-medium text-lg mb-2">معلومات الدعوة</p>
+                    <div className="text-amber-700 space-y-2">
+                      <p>📱 الهاتف: {guestData.phone || 'غير محدد'}</p>
+                      <p>👥 عدد الضيوف: {guestData.maxGuests}</p>
+                      <p>✅ حضر: {guestData.attended || 0}</p>
+                      <p>🎫 كود المجموعة: {guestData.id}</p>
+                      {ownerData?.event_time && (
+                        <p>⏰ موعد الفعالية: {new Date(ownerData.event_time).toLocaleString('ar-SA')}</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* أزرار إضافية */}
               <div className="flex justify-center gap-4">
