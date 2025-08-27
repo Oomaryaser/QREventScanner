@@ -429,6 +429,7 @@ const QRAttendanceSystem = () => {
     }
   };
 
+
   // ===== معالجة الروابط مع qr =====
   useEffect(() => {
     if (!userData) return;
@@ -440,6 +441,96 @@ const QRAttendanceSystem = () => {
       const newQuery = params.toString();
       window.history.replaceState({}, '', `${window.location.pathname}${newQuery ? '?' + newQuery : ''}`);
     }
+  // ===== أدوات مساعدة للكاميرا =====
+  const isSecureContextOk = () => {
+    if (typeof window === 'undefined') return false;
+    const isHttps = window.location.protocol === 'https:';
+    const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    return isHttps || isLocalhost;
+  };
+
+  const checkCameraAccess = async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      return { ok: false, reason: 'متصفحك لا يدعم mediaDevices' };
+    }
+    try {
+      if (navigator.permissions?.query) {
+        const status = await navigator.permissions.query({ name: 'camera' });
+        if (status.state === 'denied') {
+          return { ok: false, reason: 'تم رفض إذن الكاميرا. اسمح بها من إعدادات الموقع.' };
+        }
+      }
+    } catch (_) {}
+
+    try {
+      // اطلب إذن الكاميرا مباشرةً، هذا ضروري خاصة على أجهزة iOS
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // أوقف كل التراكات فوراً حتى لا تظل الكاميرا مفتوحة
+      stream.getTracks().forEach(t => t.stop());
+      return { ok: true };
+    } catch (_) {
+      return { ok: false, reason: 'تعذر الوصول إلى الكاميرا. تحقق من الصلاحيات.' };
+    }
+  };
+
+  const prepareScannerContainer = () => {
+    const el = document.getElementById('qr-scanner');
+    if (!el) return { ok: false, reason: 'عنصر qr-scanner غير موجود' };
+    el.style.minHeight = '280px';
+    el.style.display = 'block';
+    el.innerHTML = '';
+    return { ok: true };
+  };
+
+  // تهيئة الماسح
+  useEffect(() => {
+    let scannerInstance = null;
+
+    const startScanner = async () => {
+      if (!showScanner) return;
+
+      if (!isSecureContextOk()) {
+        setScanResult('لا يمكن فتح الكاميرا: يجب تشغيل الصفحة عبر HTTPS أو على localhost.');
+        return;
+      }
+      const camCheck = await checkCameraAccess();
+      if (!camCheck.ok) {
+        setScanResult(`لا يمكن فتح الكاميرا: ${camCheck.reason}`);
+        return;
+      }
+      const prep = prepareScannerContainer();
+      if (!prep.ok) {
+        setScanResult(`تعذر بدء الماسح: ${prep.reason}`);
+        return;
+      }
+
+      try {
+        const config = {
+          fps: 10,
+          qrbox: { width: 280, height: 280 },
+          rememberLastUsedCamera: true,
+          // استخدام الكاميرا الخلفية على الهواتف
+          videoConstraints: { facingMode: { ideal: 'environment' } }
+        };
+        scannerInstance = new Html5QrcodeScanner('qr-scanner', config, false);
+        scannerInstance.render(
+          (decodedText) => handleScan(decodedText),
+          (_err) => { /* تجاهل أخطاء المسح المتكررة */ }
+        );
+        setScanResult('افتح الكود أمام الكاميرا…');
+      } catch (e) {
+        console.error('فشل إنشاء/تشغيل الماسح:', e);
+        setScanResult('تعذر تشغيل الكاميرا. تحقق من الأذونات أو جرّب متصفحاً آخر.');
+      }
+    };
+
+    startScanner();
+
+    return () => {
+      if (scannerInstance) {
+        try { scannerInstance.clear(); } catch (_) {}
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userData, storeData]);
 
