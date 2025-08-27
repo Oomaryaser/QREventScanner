@@ -406,7 +406,7 @@ const [showScanner, setShowScanner] = useState(false);
   };
 
   // ===== مسح QR =====
-  const handleScan = (data) => {
+  const handleScan = async (data) => {
     if (!data) return;
     setScanResult('جاري التحقق من الرمز...');
 
@@ -416,12 +416,23 @@ const [showScanner, setShowScanner] = useState(false);
         const updatedGuests = storeData.guestsList.map(g =>
           g.id === group.id ? { ...g, attended: g.attended + 1 } : g
         );
-        setStoreData(prev => ({
-          ...prev,
+
+        const newData = {
+          ...storeData,
           guestsList: updatedGuests,
-          attendedGuests: prev.attendedGuests + 1
-        }));
+          attendedGuests: storeData.attendedGuests + 1,
+        };
+
+        setStoreData(newData);
         setScanResult(`تم تسجيل حضور ضيف من ${group.name}! (${group.attended + 1}/${group.maxGuests})`);
+
+        try {
+          const ok = await supabaseUpsert(userData.userCode, newData);
+          if (!ok) saveLocal(userData.userCode, newData);
+        } catch (e) {
+          console.error('خطأ في حفظ الحضور:', e);
+          saveLocal(userData.userCode, newData);
+        }
       } else {
         setScanResult(`تم بلوغ الحد الأقصى لهذه المجموعة (${group.maxGuests}).`);
       }
