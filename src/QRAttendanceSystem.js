@@ -2,8 +2,6 @@
 import React, { useState, useEffect } from 'react';
 import { QrCode, Users, CheckCircle, RotateCcw, Settings, Download, PlusCircle, Clock, Camera } from 'lucide-react';
 import { supabase } from './supabaseClient';
-import { Html5QrcodeScanner } from 'html5-qrcode';
-
 // مفتاح آخر رمز مستخدم
 const LAST_USER_KEY = 'qr_last_user_code';
 
@@ -70,8 +68,6 @@ const QRAttendanceSystem = () => {
 
   const [scanResult, setScanResult] = useState('');
   const [showAppendPanel, setShowAppendPanel] = useState(false);
-  const [showScanner, setShowScanner] = useState(false); // ← سنستخدمه الآن لتفعيل/إيقاف الماسح
-
   // ===== Routing بدائي: /invite => InviteView
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -521,43 +517,7 @@ const handleScan = async (data) => {
   }, [route, userData]);
 
   // ===== أدوات الكاميرا =====
-  const isSecureContextOk = () => {
-    if (typeof window === 'undefined') return false;
-    const isHttps = window.location.protocol === 'https:';
-    const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-    return isHttps || isLocalhost;
-  };
 
-  const checkCameraAccess = async () => {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      return { ok: false, reason: 'متصفحك لا يدعم mediaDevices' };
-    }
-    try {
-      if (navigator.permissions?.query) {
-        const status = await navigator.permissions.query({ name: 'camera' });
-        if (status.state === 'denied') {
-          return { ok: false, reason: 'تم رفض إذن الكاميرا. اسمح بها من إعدادات الموقع.' };
-        }
-      }
-    } catch (_) {}
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      stream.getTracks().forEach(t => t.stop());
-      return { ok: true };
-    } catch (_) {
-      return { ok: false, reason: 'تعذر الوصول إلى الكاميرا. تحقق من الصلاحيات.' };
-    }
-  };
-
-  const prepareScannerContainer = () => {
-    const el = document.getElementById('qr-scanner');
-    if (!el) return { ok: false, reason: 'عنصر qr-scanner غير موجود' };
-    el.style.minHeight = '280px';
-    el.style.display = 'block';
-    el.innerHTML = '';
-    return { ok: true };
-  };
 
   useEffect(() => {
     if (route !== 'app') return;
@@ -587,11 +547,6 @@ const handleScan = async (data) => {
           rememberLastUsedCamera: true,
           videoConstraints: { facingMode: { ideal: 'environment' } }
         };
-        scannerInstance = new Html5QrcodeScanner('qr-scanner', config, false);
-        scannerInstance.render(
-          (decodedText) => handleScan(decodedText),
-          (_err) => {}
-        );
         setScanResult('افتح الكود أمام الكاميرا…');
       } catch (e) {
         console.error('فشل إنشاء/تشغيل الماسح:', e);
@@ -685,20 +640,6 @@ const handleScan = async (data) => {
               </button>
 
               {/* أزرار تشغيل/إيقاف الماسح — لاستخدام setShowScanner */}
-              <button
-                onClick={() => setShowScanner(true)}
-                className="px-4 py-3 rounded-md border hover:bg-gray-50 flex items-center gap-2"
-                title="تشغيل الماسح"
-              >
-                <Camera className="w-4 h-4" /> تشغيل الماسح
-              </button>
-              <button
-                onClick={() => setShowScanner(false)}
-                className="px-4 py-3 rounded-md border hover:bg-gray-50"
-                title="إيقاف الماسح"
-              >
-                إيقاف
-              </button>
             </div>
           </div>
         </div>
@@ -783,7 +724,7 @@ const handleScan = async (data) => {
             </div>
 
             <p className="mt-4 text-sm text-gray-600">
-              استخدم كاميرا هاتفك لمسح رمز QR؛ سيفتح الرابط ويسجل الحضور تلقائياً.
+              المسح يتم حصراً من هاتف الأدمن. عند مسح QR سيفتح الرابط ويسجَّل الحضور تلقائياً.
             </p>
 
             <button
@@ -1209,7 +1150,6 @@ const remSeconds = Math.floor((remaining % (60 * 1000)) / 1000);
       <div className="max-w-6xl mx-auto p-4 sm:p-6">
         <OrganizerView />
         {/* حاوية الماسح */}
-        <div id="qr-scanner" className="mt-6"></div>
         {scanResult && <div className="mt-3 bg-white border p-3 rounded">{scanResult}</div>}
       </div>
     </div>
