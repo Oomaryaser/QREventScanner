@@ -519,50 +519,6 @@ const handleScan = async (data) => {
   // ===== أدوات الكاميرا =====
 
 
-  useEffect(() => {
-    if (route !== 'app') return;
-    let scannerInstance = null;
-    const startScanner = async () => {
-      if (!showScanner) return;
-
-      if (!isSecureContextOk()) {
-        setScanResult('لا يمكن فتح الكاميرا: يجب تشغيل الصفحة عبر HTTPS أو على localhost.');
-        return;
-      }
-      const camCheck = await checkCameraAccess();
-      if (!camCheck.ok) {
-        setScanResult(`لا يمكن فتح الكاميرا: ${camCheck.reason}`);
-        return;
-      }
-      const prep = prepareScannerContainer();
-      if (!prep.ok) {
-        setScanResult(`تعذر بدء الماسح: ${prep.reason}`);
-        return;
-      }
-
-      try {
-        const config = {
-          fps: 10,
-          qrbox: { width: 280, height: 280 },
-          rememberLastUsedCamera: true,
-          videoConstraints: { facingMode: { ideal: 'environment' } }
-        };
-        setScanResult('افتح الكود أمام الكاميرا…');
-      } catch (e) {
-        console.error('فشل إنشاء/تشغيل الماسح:', e);
-        setScanResult('تعذر تشغيل الكاميرا. تحقق من الأذونات أو جرّب متصفحاً آخر.');
-      }
-    };
-
-    startScanner();
-    return () => {
-      if (scannerInstance) {
-        try { scannerInstance.clear(); } catch (_) {}
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route, userData, storeData, showScanner]);
-
   // ===== إعادة تعيين =====
   const resetSystem = async () => {
     if (!userData?.userCode) return;
