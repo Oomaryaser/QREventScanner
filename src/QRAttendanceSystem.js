@@ -795,13 +795,29 @@ useEffect(() => {
                     </div>
                   </div>
 
-                  <div className="text-sm text-gray-600 mb-3">
-                    الحضور: <span className="font-semibold">{g.attended}</span> / {g.maxGuests}
+                  <div className="mb-3 text-center">
+                    <div className="text-lg font-semibold mb-1">
+                      {g.attended} / {g.maxGuests}
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div
+                        className={`${g.attended >= g.maxGuests ? 'bg-green-500' : 'bg-indigo-600'} h-2 rounded-full`}
+                        style={{ width: `${Math.min((g.attended / g.maxGuests) * 100, 100)}%` }}
+                      />
+                    </div>
                   </div>
 
                   {g.qrImageUrl ? (
-                    <div className="bg-gray-50 rounded-md p-3 flex flex-col items-center gap-3">
-                      <img src={g.qrImageUrl} alt={g.name} className="w-40 h-40 object-contain" loading="lazy" />
+                    <div className={`relative rounded-md p-3 flex flex-col items-center gap-3 ${g.attended >= g.maxGuests ? 'bg-green-50' : 'bg-gray-50'}`}>
+                      {g.attended >= g.maxGuests && (
+                        <div className="absolute inset-0 bg-green-500 opacity-20 rounded-md pointer-events-none" />
+                      )}
+                      <img
+                        src={g.qrImageUrl}
+                        alt={g.name}
+                        className={`w-40 h-40 object-contain ${g.attended >= g.maxGuests ? 'opacity-40' : ''}`}
+                        loading="lazy"
+                      />
                       <button
                         onClick={() => downloadQRCode(g)}
                         className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-gray-800 text-white hover:bg-black transition-colors text-sm"
