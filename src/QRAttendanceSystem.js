@@ -77,7 +77,6 @@ const QRAttendanceSystem = () => {
       }
     }
   }, []);
-
   // تسجيل دخول بسيط
   const LoginForm = () => {
     const [userCode, setUserCode] = useState('');
@@ -110,12 +109,10 @@ const QRAttendanceSystem = () => {
           guestsList: [],
           qrCodes: []
         };
-
         setUserData(newUserData);
         setEventData(newEventData);
         setCurrentView('organizer');
       }
-
       localStorage.setItem('qr_attendance_current_user', userCode);
     };
 
