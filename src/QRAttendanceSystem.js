@@ -4,16 +4,18 @@ import { QrCode, Users, Scan, CheckCircle, UserPlus, RotateCcw, Settings, Downlo
 
 // مولد QR Code حقيقي
 const generateQRCode = async (data, size = 200) => {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  
   // استخدام QR Code API
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(data)}&format=png`;
-  
+
   try {
     const response = await fetch(qrUrl);
     const blob = await response.blob();
-    return URL.createObjectURL(blob);
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
   } catch (error) {
     console.error('خطأ في توليد QR Code:', error);
     return null;
@@ -63,6 +65,19 @@ const QRAttendanceSystem = () => {
     }
   }, [userData, eventData]);
 
+  // محاولة تسجيل الدخول تلقائياً عند تحميل التطبيق
+  useEffect(() => {
+    const currentUser = localStorage.getItem('qr_attendance_current_user');
+    if (currentUser) {
+      const savedData = loadUserData(currentUser);
+      if (savedData) {
+        setUserData(savedData.userData);
+        setEventData(savedData.eventData);
+        setCurrentView('organizer');
+      }
+    }
+  }, []);
+
   // تسجيل دخول بسيط
   const LoginForm = () => {
     const [userCode, setUserCode] = useState('');
@@ -95,11 +110,13 @@ const QRAttendanceSystem = () => {
           guestsList: [],
           qrCodes: []
         };
-        
+
         setUserData(newUserData);
         setEventData(newEventData);
         setCurrentView('organizer');
       }
+
+      localStorage.setItem('qr_attendance_current_user', userCode);
     };
 
     return (
@@ -280,6 +297,7 @@ const QRAttendanceSystem = () => {
         qrCodes: []
       });
       setCurrentView('login');
+      localStorage.removeItem('qr_attendance_current_user');
     }
   };
 
