@@ -24,6 +24,10 @@ const generateQRCode = async (data, size = 200) => {
 };
 
 // ربط الـ QR بالمستخدم فقط + تضمين رقم الهاتف + الاسم (بدون وقت حدث داخلي)
+const generateTicketQRData = (ticketId, eventId, guestName, phone, issuedBy) => {
+  return `TICKET:${ticketId}|EVENT:${eventId}|GUEST:${guestName}|PHONE:${phone}|ISSUED:${issuedBy}|TIME:${Date.now()}|STATUS:VALID`;
+};
+
 const generateQRData = (userCode, groupId, guestCount, phone, displayNameEnc) => {
   return `USER:${userCode}|GUEST:${groupId}|COUNT:${guestCount}|PHONE:${phone}|NAME:${displayNameEnc}|TIME:${Date.now()}`;
 };
@@ -64,6 +68,7 @@ const QRAttendanceSystem = () => {
     totalGuests: 0,
     attendedGuests: 0,
     guestsList: [],
+    tickets: [], // قائمة بطاقات الدخول
   });
 
   const [scanResult, setScanResult] = useState('');
@@ -84,6 +89,117 @@ const QRAttendanceSystem = () => {
     } catch (error) {
       console.error('خطأ في المصادقة:', error);
       return false;
+    }
+  };
+
+  // إنشاء بطاقة دخول جديدة
+  const createTicket = async (guestName, phone) => {
+    try {
+      const ticketId = `TCK-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const eventId = storeData.eventId || 'DEFAULT_EVENT';
+      
+      const ticketData = {
+        id: ticketId,
+        eventId,
+        guestName,
+        phone,
+        issuedBy: userData?.id,
+        issuedAt: new Date().toISOString(),
+        status: 'VALID',
+        checkedIn: false,
+        checkedInAt: null
+      };
+
+      // حفظ البطاقة في قاعدة البيانات
+      await supabase
+        .from('tickets')
+        .insert([ticketData]);
+
+      // تحديث القائمة المحلية
+      setStoreData(prev => ({
+        ...prev,
+        tickets: [...prev.tickets, ticketData]
+      }));
+
+      // توليد رمز QR للبطاقة
+      const qrData = generateTicketQRData(
+        ticketId,
+        eventId,
+        guestName,
+        phone,
+        userData?.id
+      );
+      
+      return {
+        ticket: ticketData,
+        qrCode: await generateQRCode(qrData)
+      };
+    } catch (error) {
+      console.error('خطأ في إنشاء البطاقة:', error);
+      return null;
+    }
+  };
+
+  // التحقق من بطاقة الدخول عند المسح
+  const validateTicket = async (qrData) => {
+    try {
+      const data = parseQRData(qrData);
+      if (!data.TICKET || !data.EVENT) {
+        throw new Error('بطاقة غير صالحة');
+      }
+
+      // البحث عن البطاقة في قاعدة البيانات
+      const { data: ticket, error } = await supabase
+        .from('tickets')
+        .select('*')
+        .eq('id', data.TICKET)
+        .single();
+
+      if (error || !ticket) {
+        throw new Error('البطاقة غير موجودة');
+      }
+
+      if (ticket.status !== 'VALID') {
+        throw new Error('البطاقة غير صالحة');
+      }
+
+      if (ticket.checkedIn) {
+        throw new Error('تم استخدام البطاقة مسبقاً');
+      }
+
+      // تحديث حالة البطاقة
+      await supabase
+        .from('tickets')
+        .update({
+          checkedIn: true,
+          checkedInAt: new Date().toISOString(),
+          checkedInBy: userData?.id
+        })
+        .eq('id', data.TICKET);
+
+      // تحديث القائمة المحلية
+      setStoreData(prev => ({
+        ...prev,
+        attendedGuests: prev.attendedGuests + 1,
+        tickets: prev.tickets.map(t =>
+          t.id === data.TICKET
+            ? { ...t, checkedIn: true, checkedInAt: new Date().toISOString() }
+            : t
+        )
+      }));
+
+      return {
+        success: true,
+        message: 'تم تسجيل الحضور بنجاح',
+        ticket
+      };
+    } catch (error) {
+      console.error('خطأ في التحقق من البطاقة:', error);
+      return {
+        success: false,
+        message: error.message,
+        ticket: null
+      };
     }
   };
 
@@ -376,6 +492,108 @@ const QRAttendanceSystem = () => {
             </button>
           </form>
         </div>
+      </div>
+    );
+  };
+
+  // ===== نموذج إنشاء بطاقة دخول =====
+  const CreateTicketForm = () => {
+    const [guestName, setGuestName] = useState('');
+    const [phone, setPhone] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [ticketQR, setTicketQR] = useState(null);
+    const [error, setError] = useState('');
+
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      setIsLoading(true);
+      setError('');
+
+      try {
+        const result = await createTicket(guestName, phone);
+        if (result) {
+          setTicketQR(result.qrCode);
+          setGuestName('');
+          setPhone('');
+        } else {
+          setError('حدث خطأ في إنشاء البطاقة');
+        }
+      } catch (err) {
+        setError('حدث خطأ في إنشاء البطاقة');
+        console.error(err);
+      }
+
+      setIsLoading(false);
+    };
+
+    return (
+      <div className="bg-white p-6 rounded-lg shadow-md mt-4">
+        <h3 className="text-xl font-bold mb-4">إنشاء بطاقة دخول جديدة</h3>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-800 p-3 rounded-md text-sm">
+              {error}
+            </div>
+          )}
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              اسم الضيف
+            </label>
+            <input
+              type="text"
+              value={guestName}
+              onChange={(e) => setGuestName(e.target.value)}
+              className="w-full p-3 border border-gray-300 rounded-md"
+              required
+              disabled={isLoading}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              رقم الهاتف
+            </label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="w-full p-3 border border-gray-300 rounded-md"
+              required
+              disabled={isLoading}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full bg-blue-600 text-white py-3 rounded-md hover:bg-blue-700 transition-colors"
+          >
+            {isLoading ? 'جاري الإنشاء...' : 'إنشاء بطاقة'}
+          </button>
+        </form>
+
+        {ticketQR && (
+          <div className="mt-4">
+            <h4 className="text-lg font-semibold mb-2">رمز QR للبطاقة:</h4>
+            <div className="flex justify-center">
+              <img src={ticketQR} alt="رمز QR للبطاقة" className="w-48 h-48" />
+            </div>
+            <div className="mt-2 text-center">
+              <button
+                onClick={() => {
+                  const link = document.createElement('a');
+                  link.href = ticketQR;
+                  link.download = `ticket-${Date.now()}.png`;
+                  link.click();
+                }}
+                className="text-blue-600 hover:text-blue-800"
+              >
+                تحميل الرمز
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
