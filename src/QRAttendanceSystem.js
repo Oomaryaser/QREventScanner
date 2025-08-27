@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { QrCode, Users, Scan, CheckCircle, UserPlus, RotateCcw, Settings, Download } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
 // مولد QR Code حقيقي
 const generateQRCode = async (data, size = 200) => {
@@ -40,57 +41,85 @@ const QRAttendanceSystem = () => {
   const [isScanning, setIsScanning] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
 
-  // حفظ واسترجاع البيانات من localStorage
-  const saveUserData = (userCode, data) => {
-    const allData = JSON.parse(localStorage.getItem('qr_attendance_data') || '{}');
-    allData[userCode] = {
-      ...data,
-      lastUpdated: new Date().toISOString()
-    };
-    localStorage.setItem('qr_attendance_data', JSON.stringify(allData));
+  // حفظ واسترجاع البيانات من Supabase
+  const saveUserData = async (userCode, { userData, eventData }) => {
+    const { error } = await supabase
+      .from('event_history')
+      .upsert(
+        {
+          email: userCode,
+          event_name: eventData.eventId,
+          event_id: eventData.eventId,
+          total_guests: eventData.totalGuests,
+          attended_guests: eventData.attendedGuests,
+          guests: eventData.guestsList.map(g => ({
+            id: g.id,
+            name: g.name,
+            attended: g.attended,
+            maxGuests: g.maxGuests,
+            qrCode: g.qrCode,
+            qrImageUrl: g.qrImageUrl
+          })),
+          ended_at: new Date().toISOString()
+        },
+        { onConflict: 'email,event_id' }
+      );
+    if (error) {
+      console.error('خطأ في حفظ البيانات:', error);
+    }
   };
 
-  const loadUserData = (userCode) => {
-    const allData = JSON.parse(localStorage.getItem('qr_attendance_data') || '{}');
-    return allData[userCode] || null;
+  const loadUserData = async (userCode) => {
+    const { data, error } = await supabase
+      .from('event_history')
+      .select('*')
+      .eq('email', userCode)
+      .order('ended_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error || !data) return null;
+
+    const guests = (data.guests || []).map(g => ({
+      ...g,
+      isEditing: false,
+      editName: ''
+    }));
+    return {
+      userData: { userCode },
+      eventData: {
+        eventId: data.event_id,
+        totalGuests: data.total_guests,
+        attendedGuests: data.attended_guests,
+        guestsList: guests,
+        qrCodes: guests.map(g => g.qrCode)
+      }
+    };
   };
 
   // حفظ البيانات تلقائياً عند تغييرها
   useEffect(() => {
-    if (userData && eventData.eventId) {
-      saveUserData(userData.userCode, {
-        userData,
-        eventData
-      });
-    }
-  }, [userData, eventData]);
-
-  // محاولة تسجيل الدخول تلقائياً عند تحميل التطبيق
-  useEffect(() => {
-    const currentUser = localStorage.getItem('qr_attendance_current_user');
-    if (currentUser) {
-      const savedData = loadUserData(currentUser);
-      if (savedData) {
-        setUserData(savedData.userData);
-        setEventData(savedData.eventData);
-        setCurrentView('organizer');
+    const persist = async () => {
+      if (userData && eventData.eventId) {
+        await saveUserData(userData.userCode, { userData, eventData });
       }
-    }
-  }, []);
+    };
+    persist();
+  }, [userData, eventData]);
   // تسجيل دخول بسيط
   const LoginForm = () => {
     const [userCode, setUserCode] = useState('');
     const [error, setError] = useState('');
 
-    const handleLogin = (e) => {
+    const handleLogin = async (e) => {
       e.preventDefault();
       if (!userCode.trim()) {
         setError('يرجى إدخال رمز المستخدم');
         return;
       }
 
-      const savedData = loadUserData(userCode);
-      
+      const savedData = await loadUserData(userCode);
+
       if (savedData) {
         // تسجيل دخول لمستخدم موجود
         setUserData(savedData.userData);
@@ -113,7 +142,6 @@ const QRAttendanceSystem = () => {
         setEventData(newEventData);
         setCurrentView('organizer');
       }
-      localStorage.setItem('qr_attendance_current_user', userCode);
     };
 
     return (
@@ -294,7 +322,6 @@ const QRAttendanceSystem = () => {
         qrCodes: []
       });
       setCurrentView('login');
-      localStorage.removeItem('qr_attendance_current_user');
     }
   };
 
