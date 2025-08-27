@@ -29,7 +29,10 @@ const generateTicketQRData = (ticketId, eventId, guestName, phone, issuedBy) => 
 };
 
 const generateQRData = (userCode, groupId, guestCount, phone, displayNameEnc) => {
-  return `USER:${userCode}|GUEST:${groupId}|COUNT:${guestCount}|PHONE:${phone}|NAME:${displayNameEnc}|TIME:${Date.now()}`;
+  // إنشاء البيانات
+  const data = `USER:${userCode}|GUEST:${groupId}|COUNT:${guestCount}|PHONE:${phone}|NAME:${displayNameEnc}|TIME:${Date.now()}`;
+  // إنشاء رابط مع البيانات كمعامل في ال URL
+  return window.location.origin + '/invite?qr=' + encodeURIComponent(data);
 };
 
 // ===== Parsing بسيط لسلسلة QR =====
@@ -760,12 +763,19 @@ const QRAttendanceSystem = () => {
   };
 const extractQRPayload = (input) => {
   try {
-    const u = new URL(input);
-    const q = u.searchParams.get("qr");
-    return q ? decodeURIComponent(q) : input;
+    // أولاً، تحقق مما إذا كان المدخل نفسه رابطاً
+    const url = new URL(input);
+    const qrParam = url.searchParams.get("qr");
+    if (qrParam) {
+      return decodeURIComponent(qrParam);
+    }
   } catch {
-    return input;
+    // إذا لم يكن رابطاً، تحقق مما إذا كان بيانات مباشرة
+    if (input.includes('|')) {
+      return input;
+    }
   }
+  return null;
 };
   // ===== مسح QR =====
 const handleScan = async (data) => {
@@ -773,6 +783,21 @@ const handleScan = async (data) => {
   try {
     console.log('Raw QR Data:', data); // للتشخيص
     setScanResult('جاري التحقق من الرمز...');
+
+    // تحقق مما إذا كان الرمز رابطاً
+    let finalData = data;
+    try {
+      const url = new URL(data);
+      if (url.pathname === '/invite') {
+        // إذا كان الرابط مباشراً من تطبيقنا
+        const qrData = url.searchParams.get('qr');
+        if (qrData) {
+          finalData = decodeURIComponent(qrData);
+        }
+      }
+    } catch {
+      // إذا لم يكن رابطاً، استخدم البيانات كما هي
+    }
 
     // ✅ دعم الروابط
     const payload = extractQRPayload(data);
