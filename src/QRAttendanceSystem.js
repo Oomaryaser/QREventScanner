@@ -1,7 +1,8 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { QrCode, Users, CheckCircle, RotateCcw, Settings, Download, PlusCircle, Clock, Camera } from 'lucide-react';
+import { QrCode, Users, CheckCircle, RotateCcw, Settings, Download, PlusCircle, Clock, Smartphone, ExternalLink } from 'lucide-react';
 import { supabase } from './supabaseClient';
+
 // مفتاح آخر رمز مستخدم
 const LAST_USER_KEY = 'qr_last_user_code';
 
@@ -24,48 +25,19 @@ const generateQRCode = async (data, size = 200) => {
 };
 
 // ربط الـ QR بالمستخدم فقط + تضمين رقم الهاتف + الاسم (بدون وقت حدث داخلي)
-const generateTicketQRData = (ticketId, eventId, guestName, phone, issuedBy) => {
-  return `TICKET:${ticketId}|EVENT:${eventId}|GUEST:${guestName}|PHONE:${phone}|ISSUED:${issuedBy}|TIME:${Date.now()}|STATUS:VALID`;
-};
-
 const generateQRData = (userCode, groupId, guestCount, phone, displayNameEnc) => {
-  // إنشاء البيانات
-  const data = `USER:${userCode}|GUEST:${groupId}|COUNT:${guestCount}|PHONE:${phone}|NAME:${displayNameEnc}|TIME:${Date.now()}`;
-  // إنشاء رابط مع البيانات كمعامل في ال URL
-  return window.location.origin + '/invite?qr=' + encodeURIComponent(data);
+  return `USER:${userCode}|GUEST:${groupId}|COUNT:${guestCount}|PHONE:${phone}|NAME:${displayNameEnc}|TIME:${Date.now()}`;
 };
 
 // ===== Parsing بسيط لسلسلة QR =====
 const parseQRData = (str) => {
-  try {
-    // إذا كان JSON، حاول تحليله
-    if (str.trim().startsWith('{') && str.trim().endsWith('}')) {
-      try {
-        return JSON.parse(str);
-      } catch (e) {
-        console.log('Not valid JSON, continuing with normal parsing');
-      }
-    }
-
-    // التحليل العادي بالفصل |
-    const parts = (str || '').split('|');
-    const obj = {};
-    for (const p of parts) {
-      if (!p.includes(':')) continue; // تخطي الأجزاء التي لا تحتوي على :
-      const [k, ...rest] = p.split(':');
-      const key = k.trim(); // إزالة المسافات
-      if (key) {
-        obj[key] = rest.join(':').trim(); // يدعم وجود : في القيم
-      }
-    }
-    
-    console.log('Parsed Data:', obj); // للتشخيص
-    return obj;
-  } catch (error) {
-    console.error('Error parsing QR data:', error);
-    console.log('Original string:', str);
-    return null;
+  const parts = (str || '').split('|');
+  const obj = {};
+  for (const p of parts) {
+    const [k, ...rest] = p.split(':');
+    obj[k] = rest.join(':'); // يدعم وجود : في القيم
   }
+  return obj; // {USER, GUEST, COUNT, PHONE, NAME, TIME}
 };
 
 const fmtDateTimeLocal = (iso) => {
@@ -83,7 +55,7 @@ const fromDateTimeLocalToISO = (value) => {
 };
 
 const QRAttendanceSystem = () => {
-  const [route, setRoute] = useState('app'); // 'app' | 'invite'
+  const [route, setRoute] = useState('app'); // 'app' | 'invite' | 'qr-display'
   const [currentView, setCurrentView] = useState('login');
   const [userData, setUserData] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -93,70 +65,19 @@ const QRAttendanceSystem = () => {
     totalGuests: 0,
     attendedGuests: 0,
     guestsList: [],
-    tickets: [], // قائمة بطاقات الدخول
   });
 
   const [scanResult, setScanResult] = useState('');
   const [showAppendPanel, setShowAppendPanel] = useState(false);
-  const [scanning, setScanning] = useState(false);
+  // إزالة showScanner لأننا لن نستخدم الماسح المدمج
+  // const [showScanner, setShowScanner] = useState(false);
 
-  // وظيفة معالجة مسح QR
-  const onScanSuccess = async (decodedText) => {
-    try {
-      setScanning(true);
-      setScanResult('جاري التحقق من البطاقة...');
-
-      // تحليل البيانات من رمز QR
-      const data = parseQRData(decodedText);
-      
-      // التحقق من صحة البيانات
-      if (!data || (!data.TICKET && !data.USER)) {
-        setScanResult('هذا الرمز لا يحتوي على بيانات صالحة');
-        console.log('بيانات QR:', decodedText); // للتشخيص
-        return;
-      }
-
-      // معالجة بطاقة الدخول
-      if (data.TICKET) {
-        const result = await validateTicket(decodedText);
-        setScanResult(result.message);
-        if (result.success) {
-          setShowAppendPanel(true);
-          setTimeout(() => setShowAppendPanel(false), 3000);
-        }
-      } 
-      // معالجة رمز المستخدم القديم
-      else if (data.USER) {
-        const group = storeData.guestsList.find(g => g.id === data.GUEST);
-        if (group) {
-          if (group.attended < group.maxGuests) {
-            setStoreData(prev => ({
-              ...prev,
-              attendedGuests: prev.attendedGuests + 1,
-              guestsList: prev.guestsList.map(g =>
-                g.id === data.GUEST ? { ...g, attended: g.attended + 1 } : g
-              )
-            }));
-            setScanResult(`تم تسجيل حضور ضيف من مجموعة ${group.name}`);
-          } else {
-            setScanResult('تم الوصول للحد الأقصى من الضيوف لهذه المجموعة');
-          }
-        } else {
-          setScanResult('مجموعة الضيوف غير موجودة');
-        }
-      }
-    } catch (error) {
-      console.error('خطأ في معالجة QR:', error);
-      setScanResult('حدث خطأ في معالجة رمز QR: ' + error.message);
-    } finally {
-      setScanning(false);
-    }
-  };
-  // ===== Routing بدائي: /invite => InviteView
+  // ===== Routing بدائي: /invite => InviteView, /qr-display => QRDisplayView
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const path = window.location.pathname || '/';
     if (path.startsWith('/invite')) setRoute('invite');
+    else if (path.startsWith('/qr-display')) setRoute('qr-display');
     else setRoute('app');
   }, []);
 
@@ -168,117 +89,6 @@ const QRAttendanceSystem = () => {
     } catch (error) {
       console.error('خطأ في المصادقة:', error);
       return false;
-    }
-  };
-
-  // إنشاء بطاقة دخول جديدة
-  const createTicket = async (guestName, phone) => {
-    try {
-      const ticketId = `TCK-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      const eventId = storeData.eventId || 'DEFAULT_EVENT';
-      
-      const ticketData = {
-        id: ticketId,
-        eventId,
-        guestName,
-        phone,
-        issuedBy: userData?.id,
-        issuedAt: new Date().toISOString(),
-        status: 'VALID',
-        checkedIn: false,
-        checkedInAt: null
-      };
-
-      // حفظ البطاقة في قاعدة البيانات
-      await supabase
-        .from('tickets')
-        .insert([ticketData]);
-
-      // تحديث القائمة المحلية
-      setStoreData(prev => ({
-        ...prev,
-        tickets: [...prev.tickets, ticketData]
-      }));
-
-      // توليد رمز QR للبطاقة
-      const qrData = generateTicketQRData(
-        ticketId,
-        eventId,
-        guestName,
-        phone,
-        userData?.id
-      );
-      
-      return {
-        ticket: ticketData,
-        qrCode: await generateQRCode(qrData)
-      };
-    } catch (error) {
-      console.error('خطأ في إنشاء البطاقة:', error);
-      return null;
-    }
-  };
-
-  // التحقق من بطاقة الدخول عند المسح
-  const validateTicket = async (qrData) => {
-    try {
-      const data = parseQRData(qrData);
-      if (!data.TICKET || !data.EVENT) {
-        throw new Error('بطاقة غير صالحة');
-      }
-
-      // البحث عن البطاقة في قاعدة البيانات
-      const { data: ticket, error } = await supabase
-        .from('tickets')
-        .select('*')
-        .eq('id', data.TICKET)
-        .single();
-
-      if (error || !ticket) {
-        throw new Error('البطاقة غير موجودة');
-      }
-
-      if (ticket.status !== 'VALID') {
-        throw new Error('البطاقة غير صالحة');
-      }
-
-      if (ticket.checkedIn) {
-        throw new Error('تم استخدام البطاقة مسبقاً');
-      }
-
-      // تحديث حالة البطاقة
-      await supabase
-        .from('tickets')
-        .update({
-          checkedIn: true,
-          checkedInAt: new Date().toISOString(),
-          checkedInBy: userData?.id
-        })
-        .eq('id', data.TICKET);
-
-      // تحديث القائمة المحلية
-      setStoreData(prev => ({
-        ...prev,
-        attendedGuests: prev.attendedGuests + 1,
-        tickets: prev.tickets.map(t =>
-          t.id === data.TICKET
-            ? { ...t, checkedIn: true, checkedInAt: new Date().toISOString() }
-            : t
-        )
-      }));
-
-      return {
-        success: true,
-        message: 'تم تسجيل الحضور بنجاح',
-        ticket
-      };
-    } catch (error) {
-      console.error('خطأ في التحقق من البطاقة:', error);
-      return {
-        success: false,
-        message: error.message,
-        ticket: null
-      };
     }
   };
 
@@ -575,108 +385,6 @@ const QRAttendanceSystem = () => {
     );
   };
 
-  // ===== نموذج إنشاء بطاقة دخول =====
-  const CreateTicketForm = () => {
-    const [guestName, setGuestName] = useState('');
-    const [phone, setPhone] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const [ticketQR, setTicketQR] = useState(null);
-    const [error, setError] = useState('');
-
-    const handleSubmit = async (e) => {
-      e.preventDefault();
-      setIsLoading(true);
-      setError('');
-
-      try {
-        const result = await createTicket(guestName, phone);
-        if (result) {
-          setTicketQR(result.qrCode);
-          setGuestName('');
-          setPhone('');
-        } else {
-          setError('حدث خطأ في إنشاء البطاقة');
-        }
-      } catch (err) {
-        setError('حدث خطأ في إنشاء البطاقة');
-        console.error(err);
-      }
-
-      setIsLoading(false);
-    };
-
-    return (
-      <div className="bg-white p-6 rounded-lg shadow-md mt-4">
-        <h3 className="text-xl font-bold mb-4">إنشاء بطاقة دخول جديدة</h3>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-800 p-3 rounded-md text-sm">
-              {error}
-            </div>
-          )}
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              اسم الضيف
-            </label>
-            <input
-              type="text"
-              value={guestName}
-              onChange={(e) => setGuestName(e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-md"
-              required
-              disabled={isLoading}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              رقم الهاتف
-            </label>
-            <input
-              type="tel"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-md"
-              required
-              disabled={isLoading}
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-blue-600 text-white py-3 rounded-md hover:bg-blue-700 transition-colors"
-          >
-            {isLoading ? 'جاري الإنشاء...' : 'إنشاء بطاقة'}
-          </button>
-        </form>
-
-        {ticketQR && (
-          <div className="mt-4">
-            <h4 className="text-lg font-semibold mb-2">رمز QR للبطاقة:</h4>
-            <div className="flex justify-center">
-              <img src={ticketQR} alt="رمز QR للبطاقة" className="w-48 h-48" />
-            </div>
-            <div className="mt-2 text-center">
-              <button
-                onClick={() => {
-                  const link = document.createElement('a');
-                  link.href = ticketQR;
-                  link.download = `ticket-${Date.now()}.png`;
-                  link.click();
-                }}
-                className="text-blue-600 hover:text-blue-800"
-              >
-                تحميل الرمز
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
-
   // ===== توليد رمز واحد فقط في كل مرة =====
   const createSingleQRCode = async (guestsPerCode, phone, customName) => {
     if (!userData?.userCode) return;
@@ -687,8 +395,10 @@ const QRAttendanceSystem = () => {
     const nameEnc = encodeURIComponent(name);
 
     const qrData = generateQRData(userData.userCode, groupId, guestsPerCode, phone, nameEnc);
-    const link = `${window.location.origin}/invite?qr=${encodeURIComponent(qrData)}`;
-   const qrImageUrl = await generateQRCode(link);
+    // استخدام دومين Vercel الثابت
+    const link = `https://qr-event-scanner2.vercel.app/?qr=${qrData}`;
+    // تغيير محتوى QR Code ليحتوي على الرابط الكامل بدلاً من البيانات فقط
+    const qrImageUrl = await generateQRCode(link);
 
     const newGuest = {
       id: groupId,
@@ -738,17 +448,18 @@ const QRAttendanceSystem = () => {
     if (!storeData.guestsList.length) return alert("لا توجد بيانات لتصديرها.");
 
     const headers = ["الاسم", "رقم الهاتف", "عدد الضيوف", "QR Code", "رابط الدعوة"];
+    
     const rows = storeData.guestsList.map(g => [
       (g.name || '').replace(/,/g, ' '),
-      `"${g.phone || ''}"`,       // نحافظ على الرقم كنص لتفادي الصيغة العلمية
+      `"${g.phone || ''}"`,
       g.maxGuests ?? 0,
       (g.qrCode || '').replace(/,/g, ' '),
-      g.inviteUrl || `${window.location.origin}/invite?qr=${encodeURIComponent(g.qrCode || '')}`
+      g.inviteUrl || `https://qr-event-scanner2.vercel.app/?qr=${g.qrCode || ''}`
     ]);
 
     const csvLines = [headers, ...rows].map(cols => cols.join(',')).join('\n');
     const blob = new Blob(
-      ["\uFEFF" + csvLines],      // UTF-8 BOM
+      ["\uFEFF" + csvLines],
       { type: 'text/csv;charset=utf-8;' }
     );
     const url = URL.createObjectURL(blob);
@@ -761,114 +472,262 @@ const QRAttendanceSystem = () => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-const extractQRPayload = (input) => {
-  try {
-    // أولاً، تحقق مما إذا كان المدخل نفسه رابطاً
-    const url = new URL(input);
-    const qrParam = url.searchParams.get("qr");
-    if (qrParam) {
-      return decodeURIComponent(qrParam);
+
+  // ===== تسجيل الحضور في قاعدة البيانات =====
+  const recordAttendance = async (guestData, userCode) => {
+    try {
+      const attendanceRecord = {
+        guest_id: guestData.GUEST,
+        guest_name: guestData.NAME ? decodeURIComponent(guestData.NAME) : 'ضيف',
+        phone: guestData.PHONE || '',
+        user_code: userCode,
+        scan_time: new Date().toISOString(),
+        event_time: storeData.eventTimeISO,
+        guest_count: parseInt(guestData.COUNT) || 1
+      };
+
+      // محاولة إدراج في جدول attendance_records
+      const { error: insertError } = await supabase
+        .from('attendance_records')
+        .insert(attendanceRecord);
+
+      if (insertError) {
+        console.warn('فشل في إدراج سجل الحضور:', insertError.message);
+        // fallback: حفظ في التخزين المحلي
+        const localKey = `attendance_${guestData.GUEST}_${Date.now()}`;
+        localStorage.setItem(localKey, JSON.stringify(attendanceRecord));
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error('خطأ في تسجيل الحضور:', error);
+      return false;
     }
-  } catch {
-    // إذا لم يكن رابطاً، تحقق مما إذا كان بيانات مباشرة
-    if (input.includes('|')) {
-      return input;
+  };
+
+  // ===== جلب سجلات الحضور =====
+  const getAttendanceRecords = async () => {
+    if (!userData?.userCode) return [];
+    
+    try {
+      const { data, error } = await supabase
+        .from('attendance_records')
+        .select('*')
+        .eq('user_code', userData.userCode)
+        .order('scan_time', { ascending: false });
+
+      if (error) {
+        console.warn('فشل في جلب سجلات الحضور:', error.message);
+        return [];
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error('خطأ في جلب سجلات الحضور:', error);
+      return [];
     }
-  }
-  return null;
-};
-  // ===== مسح QR =====
-const handleScan = async (data) => {
-  if (!data) return;
-  try {
-    console.log('Raw QR Data:', data); // للتشخيص
+  };
+
+  // ===== تحديث سجل صاحب الـ QR (زيادة attended لمجموعة محددة) =====
+  const markOwnerGuestAttended = async (ownerCode, guestId) => {
+    if (!ownerCode || !guestId) return false;
+    try {
+      // حاول تحديث صف user_qr_codes أولاً
+      const { data: ownerRow, error: ownerErr } = await supabase
+        .from('user_qr_codes')
+        .select('*')
+        .eq('email', ownerCode)
+        .limit(1)
+        .single();
+
+      if (!ownerErr && ownerRow) {
+        const guests = ownerRow.guests || [];
+        const idx = guests.findIndex(g => g.id === guestId);
+        if (idx === -1) {
+          // المجموعة غير موجودة لدى المالك
+          return false;
+        }
+
+        // منع تجاوز الحد الأقصى
+        const current = guests[idx].attended || 0;
+        const maxG = guests[idx].maxGuests || 0;
+        if (maxG > 0 && current >= maxG) {
+          // لا يمكن زيادة أكثر من الحد
+          return false;
+        }
+
+        guests[idx].attended = current + 1;
+        const newAttendedTotal = (ownerRow.attended_guests || 0) + 1;
+
+        const upsertPayload = {
+          email: ownerCode,
+          event_time: ownerRow.event_time || null,
+          total_guests: ownerRow.total_guests || (guests.reduce((s, gg) => s + (gg.maxGuests || 0), 0)),
+          attended_guests: newAttendedTotal,
+          guests: guests,
+          updated_at: new Date().toISOString()
+        };
+
+        const { error: upsertErr } = await supabase
+          .from('user_qr_codes')
+          .upsert(upsertPayload, { onConflict: 'email' });
+
+        if (!upsertErr) return true;
+
+        console.warn('upsert to user_qr_codes failed, trying event_history fallback:', upsertErr.message || upsertErr);
+      }
+
+      // fallback: حاول تحديث أحدث سجل في event_history
+      const { data: histRow, error: histErr } = await supabase
+        .from('event_history')
+        .select('*')
+        .eq('email', ownerCode)
+        .order('ended_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (!histErr && histRow) {
+        const guests = histRow.guests || [];
+        const idx = guests.findIndex(g => g.id === guestId);
+        if (idx === -1) return false;
+
+        const current = guests[idx].attended || 0;
+        const maxG = guests[idx].maxGuests || 0;
+        if (maxG > 0 && current >= maxG) return false;
+
+        guests[idx].attended = current + 1;
+        const newAttendedTotal = (histRow.attended_guests || 0) + 1;
+
+        const upsertPayload = {
+          email: ownerCode,
+          event_name: histRow.event_name || null,
+          event_id: histRow.event_id || null,
+          event_time: histRow.event_time || null,
+          total_guests: histRow.total_guests || (guests.reduce((s, gg) => s + (gg.maxGuests || 0), 0)),
+          attended_guests: newAttendedTotal,
+          guests: guests,
+          ended_at: histRow.ended_at || new Date().toISOString()
+        };
+
+        const { error: upsertErr2 } = await supabase
+          .from('event_history')
+          .upsert(upsertPayload, { onConflict: 'email' });
+
+        if (!upsertErr2) return true;
+        console.error('Fallback upsert to event_history failed:', upsertErr2.message || upsertErr2);
+      }
+
+      return false;
+    } catch (e) {
+      console.error('markOwnerGuestAttended error:', e);
+      return false;
+    }
+  };
+
+  // ===== مسح QR محدث =====
+  const handleScan = async (data) => {
+    if (!data) return;
     setScanResult('جاري التحقق من الرمز...');
 
-    // تحقق مما إذا كان الرمز رابطاً
-    let finalData = data;
     try {
-      const url = new URL(data);
-      if (url.pathname === '/invite') {
-        // إذا كان الرابط مباشراً من تطبيقنا
-        const qrData = url.searchParams.get('qr');
-        if (qrData) {
-          finalData = decodeURIComponent(qrData);
+      // إذا الماسح أعاد رابط كامل مثل https://.../invite?qr=...
+      let decoded = data;
+      try {
+        decoded = decodeURIComponent(data);
+      } catch (_) {
+        // keep original if decode fails
+      }
+
+      // إذا هو رابط يحتوي معلمة qr=... استخرج قيمة qr
+      if (decoded.includes('?qr=') || decoded.includes('&qr=')) {
+        try {
+          const url = new URL(decoded, window.location.origin);
+          const qrParam = url.searchParams.get('qr');
+          if (qrParam) decoded = qrParam;
+        } catch (_) {
+          // محاولة استخراج يدوياً
+          const m = decoded.match(/[?&]qr=([^&]+)/);
+          if (m && m[1]) decoded = decodeURIComponent(m[1]);
         }
       }
-    } catch {
-      // إذا لم يكن رابطاً، استخدم البيانات كما هي
-    }
 
-    // ✅ دعم الروابط
-    const payload = extractQRPayload(data);
-    console.log('Extracted Payload:', payload); // للتشخيص
+      // الآن decoded يجب أن يكون نص QR الفعلي (USER:...|GUEST:...|...)
+      const qrData = parseQRData(decoded);
 
-    // محاولة تحليل البيانات كـ JSON
-    try {
-      const jsonData = JSON.parse(payload);
-      console.log('Parsed JSON:', jsonData); // للتشخيص
-      if (jsonData && typeof jsonData === 'object') {
-        data = payload; // استخدم البيانات المستخرجة
+      if (!qrData.USER || !qrData.GUEST) {
+        setScanResult('QR Code غير صالح - بيانات ناقصة');
+        setTimeout(() => setScanResult(''), 3000);
+        return;
       }
-    } catch (e) {
-      // ليس JSON، استمر مع معالجة النص العادي
-    }
 
-    // تحليل البيانات
-    const parsedData = parseQRData(data);
-    console.log('Parsed QR Data:', parsedData); // للتشخيص
+      const ownerCode = qrData.USER;
+      const guestId = qrData.GUEST;
+      const isLocalOwner = ownerCode === userData?.userCode;
+      const group = storeData.guestsList.find(g => g.id === guestId);
 
-    if (!parsedData || Object.keys(parsedData).length === 0) {
-      setScanResult('لم يتم العثور على بيانات صالحة في رمز QR');
-      return;
-    }
-
-    // التحقق من نوع البطاقة
-    if (parsedData.TICKET) {
-      // بطاقة دخول جديدة
-      const result = await validateTicket(data);
-      setScanResult(result.message);
-      if (result.success) {
-        setShowAppendPanel(true);
-        setTimeout(() => setShowAppendPanel(false), 3000);
-        // تحديث قائمة الحضور
-        setStoreData(prev => ({
-          ...prev,
-          attendedGuests: prev.attendedGuests + 1
-        }));
+      // إذا المالك محلياً ولكن المجموعة غير موجودة → خطأ محلي
+      if (isLocalOwner && !group) {
+        setScanResult('مجموعة غير موجودة في النظام');
+        setTimeout(() => setScanResult(''), 3000);
+        return;
       }
-    } else if (parsedData.USER) {
-      // رمز QR تقليدي
-      const group = storeData.guestsList.find(g => g.id === parsedData.GUEST);
-      if (group) {
-        if (group.attended < group.maxGuests) {
-          const updatedGuests = storeData.guestsList.map(g =>
-            g.id === group.id ? { ...g, attended: g.attended + 1 } : g
-          );
-          const newData = {
-            ...storeData,
-            guestsList: updatedGuests,
-            attendedGuests: storeData.attendedGuests + 1,
-          };
-          setStoreData(newData);
-          setScanResult(`تم تسجيل حضور ضيف من ${group.name}!`);
-          await supabaseUpsert(userData.userCode, newData);
-        } else {
-          setScanResult('تم بلوغ الحد الأقصى لهذه المجموعة.');
+
+      // إذا المالك محلياً وتجاوز الحد → منع
+      if (isLocalOwner && group && group.attended >= group.maxGuests) {
+        setScanResult(`تم بلوغ الحد الأقصى لهذه المجموعة (${group.maxGuests} ضيف)`);
+        setTimeout(() => setScanResult(''), 3000);
+        return;
+      }
+
+      // سجّل دائماً سجل الحضور العام
+      await recordAttendance(qrData, ownerCode);
+
+      if (isLocalOwner && group) {
+        // حدث الحالة محلياً وحافظ على التناسق في DB
+        const updatedGuests = storeData.guestsList.map(g =>
+          g.id === group.id ? { ...g, attended: g.attended + 1 } : g
+        );
+
+        const newData = {
+          ...storeData,
+          guestsList: updatedGuests,
+          attendedGuests: storeData.attendedGuests + 1,
+        };
+
+        setStoreData(newData);
+
+        try {
+          const ok = await supabaseUpsert(userData.userCode, newData);
+          if (!ok) saveLocal(userData.userCode, newData);
+        } catch (e) {
+          console.error('خطأ في حفظ التحديث المحلي:', e);
+          saveLocal(userData.userCode, newData);
         }
+
+        setScanResult(`✅ تم تسجيل حضور داخل حسابك: ${group.name} (${group.attended + 1}/${group.maxGuests})`);
       } else {
-        setScanResult('هذا الرمز غير مرتبط بأي مجموعة معروفة');
+        // الحارس يمسح رمز تابع لمالك آخر: حدث سجل المالك في DB
+        const ownerMarked = await markOwnerGuestAttended(ownerCode, guestId);
+        setScanResult(ownerMarked
+          ? `✅ تم تسجيل حضور وتم تحديث صاحب الكود (${ownerCode})`
+          : `✅ تم تسجيل حضور (لم يتم تحديث سجل صاحب الكود تلقائياً أو وصل الحد)`);
       }
-    } else {
-      setScanResult('نوع رمز QR غير معروف أو غير صالح');
-    }
-  } catch (error) {
-    console.error('Error processing QR:', error);
-    setScanResult('حدث خطأ في معالجة رمز QR: ' + error.message);
-  }
-};
 
-  // معالجة qr بالروابط (في الصفحة الرئيسية فقط)
+      // الحارس يبقى في لوحة التحكم بدون إعادة تحميل
+      setTimeout(() => {
+        setScanResult('');
+        // setShowScanner(false); // إيقاف الماسح
+      }, 2000);
+
+    } catch (error) {
+      console.error('خطأ في معالجة QR:', error);
+      setScanResult('حدث خطأ في معالجة الرمز');
+      setTimeout(() => setScanResult(''), 3000);
+    }
+  };
+
+  // معالجة qr بالروابط من كاميرا الموبايل
   useEffect(() => {
     if (route !== 'app' || !userData) return;
     const params = new URLSearchParams(window.location.search);
@@ -882,7 +741,7 @@ const handleScan = async (data) => {
   }, [route, userData]);
 
   // ===== أدوات الكاميرا =====
-
+  // تمت إزالة جميع دوال الكاميرا والماسح المدمج
 
   // ===== إعادة تعيين =====
   const resetSystem = async () => {
@@ -914,13 +773,23 @@ const handleScan = async (data) => {
     setCurrentView('login');
   };
 
-  // ===== واجهة المنظم =====
+  // ===== واجهة المنظم محدثة =====
   const OrganizerView = () => {
+    const [attendanceRecords, setAttendanceRecords] = useState([]);
+    const [showAttendanceList, setShowAttendanceList] = useState(false);
+
     const attendancePercent = storeData.totalGuests > 0
       ? Math.round((storeData.attendedGuests / storeData.totalGuests) * 100)
       : 0;
 
     const eventLocalValue = storeData.eventTimeISO ? fmtDateTimeLocal(storeData.eventTimeISO) : '';
+
+    // جلب سجلات الحضور عند تحميل الصفحة
+    useEffect(() => {
+      if (userData?.userCode) {
+        getAttendanceRecords().then(setAttendanceRecords);
+      }
+    }, [userData, storeData.attendedGuests]);
 
     return (
       <div className="space-y-6">
@@ -935,8 +804,8 @@ const handleScan = async (data) => {
             <Clock className="w-5 h-5 text-indigo-600" />
             <h3 className="font-semibold text-gray-800">وقت الفعالية</h3>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="sm:col-span-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
               <label className="block text-sm font-medium mb-2">حدد التاريخ والوقت</label>
               <input
                 type="datetime-local"
@@ -949,7 +818,7 @@ const handleScan = async (data) => {
               />
               <p className="text-xs text-gray-500 mt-1">سيظهر الـQR للضيوف قبل موعد الفعالية بنصف ساعة فقط.</p>
             </div>
-            <div className="flex items-end gap-2">
+            <div className="flex items-end">
               <button
                 onClick={() => {
                   if (!storeData.eventTimeISO) return alert('اختر وقت الفعالية أولاً');
@@ -959,14 +828,43 @@ const handleScan = async (data) => {
               >
                 حفظ الوقت
               </button>
-
-              {/* أزرار تشغيل/إيقاف الماسح — لاستخدام setShowScanner */}
             </div>
           </div>
         </div>
 
+        {/* تعليمات المسح بكاميرا الموبايل */}
+        <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
+          <div className="flex items-start gap-3">
+            <Smartphone className="w-6 h-6 text-amber-600 mt-1" />
+            <div>
+              <h3 className="font-semibold text-amber-800 mb-2">تعليمات المسح للحارس</h3>
+              <div className="text-sm text-amber-700 space-y-1">
+                <p>• استخدم تطبيق الكاميرا في موبايلك لمسح QR Code</p>
+                <p>• سيتم فتح رابط تلقائياً بعد المسح</p>
+                <p>• سيتم تسجيل الحضور فوراً عند فتح الرابط</p>
+                <p>• لا حاجة لاستخدام ماسح مدمج في الموقع</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* نتيجة المسح */}
+        {scanResult && (
+          <div className={`p-4 rounded-lg border text-center font-medium ${
+            scanResult.includes('✅') 
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : scanResult.includes('خطأ') || scanResult.includes('غير صالح')
+              ? 'bg-red-50 border-red-200 text-red-800'
+              : 'bg-blue-50 border-blue-200 text-blue-800'
+          }`}>
+            {scanResult}
+          </div>
+        )}
+
+        {/* رابط اختبار المسح */}
+
         {/* إحصائيات عامة */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           <div className="bg-blue-50 p-3 sm:p-4 rounded-lg border border-blue-200">
             <div className="flex items-center gap-2 sm:gap-3">
               <Users className="w-8 h-8 text-blue-600" />
@@ -994,6 +892,15 @@ const handleScan = async (data) => {
               </div>
             </div>
           </div>
+          <div className="bg-purple-50 p-4 rounded-lg border border-purple-200">
+            <div className="flex items-center gap-3">
+              <Clock className="w-8 h-8 text-purple-600" />
+              <div>
+                <p className="text-sm text-purple-600">سجلات الحضور</p>
+                <p className="text-2xl font-bold text-purple-800">{attendanceRecords.length}</p>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* شريط تقدم عام */}
@@ -1003,475 +910,537 @@ const handleScan = async (data) => {
             <span className="text-sm text-gray-500">{attendancePercent}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-3">
-            <div className="bg-gradient-to-r from-green-500 to-blue-500 h-3 rounded-full transition-all duration-500" style={{ width: `${attendancePercent}%` }}></div>
+            <div
+              className="bg-gradient-to-r from-blue-500 to-green-500 h-3 rounded-full transition-all duration-300"
+              style={{ width: `${attendancePercent}%` }}
+            ></div>
           </div>
         </div>
 
-        {/* عمليات رئيسية */}
-        <div className="bg-white p-3 sm:p-4 rounded-lg shadow">
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center justify-between">
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={downloadAllQRCodes}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-gray-800 text-white hover:bg-black transition-colors"
-              >
-                <Download className="w-4 h-4" />
-                تحميل كل رموز QR
-              </button>
+        {/* إضافة رموز جديدة */}
+        <AddQRSection />
 
-              <button
-                onClick={() => setShowAppendPanel(v => !v)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-              >
-                <PlusCircle className="w-4 h-4" />
-                إضافة رمز جديد
-              </button>
+        {/* قائمة المجموعات */}
+        <GuestsList />
 
-              <button
-                onClick={exportCSV}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors"
-              >
-                <Download className="w-4 h-4" />
-                تصدير CSV
-              </button>
+        {/* سجلات الحضور */}
+        <AttendanceRecords records={attendanceRecords} show={showAttendanceList} setShow={setShowAttendanceList} />
 
-              <button
-                onClick={resetSystem}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors"
-              >
-                <RotateCcw className="w-4 h-4" />
-                إعادة التعيين (حذف كلي)
-              </button>
-            </div>
-
-            <p className="mt-4 text-sm text-gray-600">
-              المسح يتم حصراً من هاتف الأدمن. عند مسح QR سيفتح الرابط ويسجَّل الحضور تلقائياً.
-            </p>
-
-            <button
-              onClick={handleLogout}
-              className="px-4 py-2 rounded-md border border-gray-300 hover:bg-gray-50 transition-colors"
-            >
-              تسجيل الخروج
-            </button>
-          </div>
-
-          {/* لوحة الإضافة */}
-          {showAppendPanel && (
-            <div className="mt-4 border rounded-lg p-4 bg-indigo-50">
-              <h5 className="font-semibold mb-3">إنشاء رمز واحد وتحديد عدد المدعوين + رقم هاتف</h5>
-              <AppendPanel />
-            </div>
-          )}
-        </div>
-
-        {/* حالة فارغة */}
-        {storeData.guestsList.length === 0 && (
-          <div className="bg-white p-6 rounded-lg border text-center">
-            <h4 className="text-lg font-semibold mb-2">لا توجد رموز QR بعد</h4>
-            <p className="text-gray-600 mb-4">اضغط "إضافة رمز جديد" لإنشاء الرمز وربطه بحسابك في قاعدة البيانات.</p>
-            <button
-              onClick={() => setShowAppendPanel(true)}
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-            >
-              <PlusCircle className="w-5 h-5" />
-              إنشاء أول رمز
-            </button>
-          </div>
-        )}
-
-        {/* قائمة الرموز */}
-        {storeData.guestsList.length > 0 && (
-          <div className="bg-white p-4 sm:p-6 rounded-lg shadow-md border">
-            <h4 className="text-lg font-semibold mb-4">الرموز المولدة</h4>
-
-            {scanResult && <div className="mb-4 p-3 rounded-md border text-sm bg-gray-50">{scanResult}</div>}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {storeData.guestsList.map((g) => {
-                const done = g.attended >= g.maxGuests;
-                const percent = g.maxGuests > 0 ? Math.min(100, Math.round((g.attended / g.maxGuests) * 100)) : 0;
-
-                return (
-                  <div
-                    key={g.id}
-                    className={`relative border rounded-lg p-3 transition ${done ? 'border-green-300 bg-green-50/40 opacity-70 pointer-events-none' : 'bg-white'}`}
-                    aria-disabled={done}
-                  >
-                    {/* شارة الاكتمال */}
-                    {done && (
-                      <div className="absolute top-2 left-2 flex items-center gap-1 text-green-700 bg-green-100/80 px-2 py-1 rounded-md text-xs">
-                        <CheckCircle className="w-4 h-4" />
-                        اكتمل
-                      </div>
-                    )}
-
-                    {/* رأس البطاقة */}
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <h5 className="font-medium truncate">👥 {g.name}</h5>
-                        </div>
-                        <div className="mt-1 text-sm">
-                          <span className={`font-semibold ${done ? 'text-green-700' : 'text-gray-800'}`}>{g.attended}</span>
-                          <span className="text-gray-500"> / {g.maxGuests}</span>
-                          <span className="mx-2 text-gray-400">|</span>
-                          <span className={`text-xs ${done ? 'text-green-700' : 'text-gray-500'}`}>{percent}%</span>
-                        </div>
-                        <div className="mt-1 text-xs text-gray-600">
-                          📞 رقم الهاتف: <span className="font-medium">{g.phone || '—'}</span>
-                        </div>
-                        <div className="mt-1 text-xs">
-                          🔗 رابط الدعوة:{" "}
-                          <a href={g.inviteUrl} target="_blank" rel="noreferrer" className="text-indigo-600 underline break-all">
-                            {g.inviteUrl}
-                          </a>
-                        </div>
-                      </div>
-
-                      {/* تعديل الاسم */}
-                      <div className="flex items-center gap-2">
-                        {!g.isEditing ? (
-                          <button
-                            onClick={() =>
-                              setStoreData((prev) => ({
-                                ...prev,
-                                guestsList: prev.guestsList.map((x) =>
-                                  x.id === g.id ? { ...x, isEditing: true, editName: g.name } : x
-                                ),
-                              }))
-                            }
-                            className="p-2 rounded-md border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="تعديل الاسم"
-                            disabled={done}
-                          >
-                            <Settings className="w-4 h-4" />
-                          </button>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => {
-                                setStoreData((prev) => ({
-                                  ...prev,
-                                  guestsList: prev.guestsList.map((x) =>
-                                    x.id === g.id ? { ...x, name: x.editName || g.name, isEditing: false } : x
-                                  ),
-                                }));
-                              }}
-                              className="px-2 py-1 rounded-md bg-green-600 text-white text-sm"
-                            >
-                              حفظ
-                            </button>
-                            <button
-                              onClick={() =>
-                                setStoreData((prev) => ({
-                                  ...prev,
-                                  guestsList: prev.guestsList.map((x) =>
-                                    x.id === g.id ? { ...x, isEditing: false, editName: '' } : x
-                                  ),
-                                }))
-                              }
-                              className="px-2 py-1 rounded-md border text-sm"
-                            >
-                              إلغاء
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* تقدم المجموعة */}
-                    <div className="mb-3">
-                      <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
-                        <div
-                          className={`h-2.5 rounded-full transition-all duration-500 ${done ? 'bg-green-600' : 'bg-gradient-to-r from-green-500 to-blue-500'}`}
-                          style={{ width: `${percent}%` }}
-                        />
-                      </div>
-                      <div className={`mt-1 text-xs ${done ? 'text-green-700' : 'text-gray-500'}`}>
-                        {done ? 'تم اكتمال حضور هذه المجموعة' : 'تقدم حضور المجموعة'}
-                      </div>
-                    </div>
-
-                    {/* صورة الـ QR */}
-                    {g.qrImageUrl ? (
-                      <div className={`rounded-md p-3 flex flex-col items-center gap-3 border ${done ? 'border-green-300 bg-white/50' : 'bg-gray-50 border-gray-200'}`}>
-                        <div className="relative">
-                          <img
-                            src={g.qrImageUrl}
-                            alt={g.name}
-                            className={`w-40 h-40 object-contain transition ${done ? 'opacity-50 grayscale-[30%]' : ''}`}
-                            loading="lazy"
-                          />
-                          {done && <div className="absolute inset-0 rounded-md ring-2 ring-green-500/70 pointer-events-none"></div>}
-                        </div>
-
-                        <button
-                          onClick={() => downloadQRCode(g)}
-                          className={`inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors
-                            ${done ? 'bg-green-600 text-white' : 'bg-gray-800 text-white hover:bg-black'}
-                            disabled:opacity-50 disabled:cursor-not-allowed`}
-                          disabled={done}
-                          tabIndex={done ? -1 : 0}
-                        >
-                          <Download className="w-4 h-4" />
-                          تحميل QR
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="text-xs text-gray-500">لا توجد صورة QR</div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        {/* أزرار إدارية */}
+        <AdminButtons />
       </div>
     );
   };
 
-  // لوحة إدخال القيم لعملية الإنشاء (رمز واحد فقط)
-  const AppendPanel = () => {
-    const [perCode, setPerCode] = useState(2);
+  // مكونات فرعية
+  const AddQRSection = () => {
+    const [guestsPerCode, setGuestsPerCode] = useState(1);
     const [phone, setPhone] = useState('');
     const [customName, setCustomName] = useState('');
-    const [busy, setBusy] = useState(false);
-
-    const handle = async () => {
-      if (busy) return;
-      if (!storeData.eventTimeISO) {
-        const ok = window.confirm('لم تحدد وقت الفعالية. هل تريد الاستمرار؟ (سيظل الرابط يعمل لكن بدون عدّاد)');
-        if (!ok) return;
-      }
-      if (!phone.trim()) {
-        alert('يرجى إدخال رقم الهاتف لهذا الرمز.');
-        return;
-      }
-      if (perCode <= 0) {
-        alert('عدد الضيوف يجب أن يكون 1 على الأقل.');
-        return;
-      }
-      setBusy(true);
-      await createSingleQRCode(perCode, phone.trim(), customName);
-      setBusy(false);
-      setCustomName('');
-      setPhone('');
-      setPerCode(2);
-    };
 
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div>
-          <label className="block text-sm font-medium mb-2">اسم الرمز (اختياري)</label>
+      <div className="bg-white p-4 rounded-lg shadow border">
+        <h3 className="font-semibold text-gray-800 mb-4">إضافة رمز QR جديد</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <input
             type="text"
+            placeholder="اسم المجموعة"
             value={customName}
             onChange={(e) => setCustomName(e.target.value)}
-            className="w-full p-3 border border-gray-300 rounded-md"
-            placeholder="مثال: عائلة علي"
+            className="p-3 border rounded-md"
           />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-2">عدد الضيوف داخل هذا الرمز</label>
-          <input
-            type="number"
-            value={perCode}
-            onChange={(e) => setPerCode(parseInt(e.target.value) || 0)}
-            className="w-full p-3 border border-gray-300 rounded-md text-center"
-            min="1"
-            max="20"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-2">رقم الهاتف (لهذا الرمز)</label>
           <input
             type="tel"
+            placeholder="رقم الهاتف"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="w-full p-3 border border-gray-300 rounded-md"
-            placeholder="مثال: 07xxxxxxxxx"
+            className="p-3 border rounded-md"
           />
-        </div>
-        <div className="sm:col-span-3 flex items-end">
+          <input
+            type="number"
+            min="1"
+            max="20"
+            placeholder="عدد الضيوف"
+            value={guestsPerCode}
+            onChange={(e) => setGuestsPerCode(parseInt(e.target.value) || 1)}
+            className="p-3 border rounded-md"
+          />
           <button
-            onClick={handle}
-            disabled={busy || perCode <= 0 || !phone.trim()}
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-50"
+            onClick={() => {
+              createSingleQRCode(guestsPerCode, phone, customName);
+              setCustomName('');
+              setPhone('');
+              setGuestsPerCode(1);
+            }}
+            className="px-4 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center justify-center gap-2"
           >
-            {busy ? 'جاري الإنشاء...' : 'إنشاء الرمز الآن'}
+            <PlusCircle className="w-4 h-4" />
+            إضافة
           </button>
         </div>
       </div>
     );
   };
 
-  // ===== صفحة الدعوة /invite =====
-  const InviteView = () => {
-    const [qrParam, setQrParam] = useState(null);
-    const [qrImg, setQrImg] = useState(null);
-    const [now, setNow] = useState(Date.now());
-    const [eventTimeMs, setEventTimeMs] = useState(null);
-    const [guestName, setGuestName] = useState('ضيفنا الكريم'); // ← تعريف guestName لتفادي no-undef
+  const GuestsList = () => (
+    <div className="bg-white rounded-lg shadow border">
+      <div className="p-4 border-b">
+        <h3 className="font-semibold text-gray-800">قائمة المجموعات</h3>
+      </div>
+      <div className="divide-y max-h-96 overflow-y-auto">
+        {storeData.guestsList.map((guest) => (
+          <GuestItem key={guest.id} guest={guest} />
+        ))}
+        {storeData.guestsList.length === 0 && (
+          <div className="p-8 text-center text-gray-500">لا توجد مجموعات بعد</div>
+        )}
+      </div>
+    </div>
+  );
 
-    // قراءة qr من الرابط
+  const GuestItem = ({ guest }) => {
+    const [isEditing, setIsEditing] = useState(false);
+    const [editName, setEditName] = useState(guest.name);
+
+    const saveEdit = () => {
+      if (!editName.trim()) return;
+      setStoreData(prev => ({
+        ...prev,
+        guestsList: prev.guestsList.map(g =>
+          g.id === guest.id ? { ...g, name: editName.trim() } : g
+        )
+      }));
+      setIsEditing(false);
+    };
+
+    const deleteGuest = () => {
+      if (!window.confirm(`حذف ${guest.name}؟`)) return;
+      setStoreData(prev => ({
+        ...prev,
+        totalGuests: prev.totalGuests - guest.maxGuests,
+        attendedGuests: prev.attendedGuests - guest.attended,
+        guestsList: prev.guestsList.filter(g => g.id !== guest.id)
+      }));
+    };
+
+    // دالة نسخ رابط الدعوة
+    const copyInviteLink = async () => {
+      try {
+        await navigator.clipboard.writeText(guest.inviteUrl);
+        const button = document.querySelector(`[data-copy-btn="${guest.id}"]`);
+        if (button) {
+          const originalText = button.innerHTML;
+          button.innerHTML = '✅ تم النسخ';
+          button.classList.add('bg-green-600', 'text-white');
+          setTimeout(() => {
+            button.innerHTML = originalText;
+            button.classList.remove('bg-green-600', 'text-white');
+          }, 2000);
+        }
+      } catch (error) {
+        const textArea = document.createElement('textarea');
+        textArea.value = guest.inviteUrl;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        alert('تم نسخ رابط الدعوة');
+      }
+    };
+
+    // دالة فتح واجهة QR منفصلة
+    const openQRDisplay = () => {
+      const qrDisplayUrl = `https://qr-event-scanner2.vercel.app/qr-display?guest=${encodeURIComponent(guest.id)}`;
+      window.open(qrDisplayUrl, '_blank');
+    };
+
+    return (
+      <div className="p-4 hover:bg-gray-50">
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            {isEditing ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="flex-1 p-2 border rounded"
+                  onKeyPress={(e) => e.key === 'Enter' && saveEdit()}
+                />
+                <button onClick={saveEdit} className="px-3 py-2 bg-green-600 text-white rounded text-sm">حفظ</button>
+                <button onClick={() => setIsEditing(false)} className="px-3 py-2 bg-gray-600 text-white rounded text-sm">إلغاء</button>
+              </div>
+            ) : (
+              <div>
+                <h4 className="font-medium text-gray-800">{guest.name}</h4>
+                <div className="text-sm text-gray-600 flex gap-4">
+                  <span>📱 {guest.phone || 'لا يوجد'}</span>
+                  <span>👥 {guest.attended}/{guest.maxGuests}</span>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={openQRDisplay}
+              className="p-2 text-green-600 hover:bg-green-50 rounded transition-colors"
+              title="عرض QR في صفحة منفصلة"
+            >
+              <ExternalLink className="w-4 h-4" />
+            </button>
+            <button
+              onClick={copyInviteLink}
+              data-copy-btn={guest.id}
+              className="p-2 text-purple-600 hover:bg-purple-50 rounded transition-colors"
+              title="نسخ رابط الدعوة"
+            >
+              📋
+            </button>
+            <button
+              onClick={() => downloadQRCode(guest)}
+              className="p-2 text-blue-600 hover:bg-blue-50 rounded"
+              title="تحميل QR"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setIsEditing(!isEditing)}
+              className="p-2 text-gray-600 hover:bg-gray-50 rounded"
+              title="تعديل"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+            <button
+              onClick={deleteGuest}
+              className="p-2 text-red-600 hover:bg-red-50 rounded"
+              title="حذف"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        
+        {guest.qrImageUrl && (
+          <div className="mt-3 text-center">
+            <img src={guest.qrImageUrl} alt={`QR ${guest.name}`} className="w-32 h-32 mx-auto border rounded" />
+            <p className="text-xs text-gray-500 mt-1">QR Code يحتوي على الرابط الكامل</p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const AttendanceRecords = ({ records, show, setShow }) => (
+    <div className="bg-white rounded-lg shadow border">
+      <div className="p-4 border-b flex justify-between items-center">
+        <h3 className="font-semibold text-gray-800">سجلات الحضور</h3>
+        <button
+          onClick={() => setShow(!show)}
+          className="text-blue-600 hover:text-blue-800"
+        >
+          {show ? 'إخفاء' : 'عرض'} ({records.length})
+        </button>
+      </div>
+      {show && (
+        <div className="divide-y max-h-64 overflow-y-auto">
+          {records.map((record, idx) => (
+            <div key={idx} className="p-3 text-sm">
+              <div className="flex justify-between">
+                <span className="font-medium">{record.guest_name}</span>
+                <span className="text-gray-500">{new Date(record.scan_time).toLocaleString('ar-SA')}</span>
+              </div>
+              <div className="text-gray-600 text-xs mt-1">
+                📱 {record.phone} | 👥 {record.guest_count} ضيف
+              </div>
+            </div>
+          ))}
+          {records.length === 0 && (
+            <div className="p-8 text-center text-gray-500">لا توجد سجلات حضور</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const AdminButtons = () => (
+    <div className="flex flex-wrap gap-3">
+      <button
+        onClick={downloadAllQRCodes}
+        className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 flex items-center gap-2"
+      >
+        <Download className="w-4 h-4" />
+        تحميل جميع الرموز
+      </button>
+      <button
+        onClick={exportCSV}
+        className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 flex items-center gap-2"
+      >
+        <Download className="w-4 h-4" />
+        تصدير CSV
+      </button>
+      <button
+        onClick={resetSystem}
+        className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 flex items-center gap-2"
+      >
+        <RotateCcw className="w-4 h-4" />
+        إعادة تعيين
+      </button>
+      <button
+        onClick={handleLogout}
+        className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+      >
+        تسجيل خروج
+      </button>
+    </div>
+  );
+
+  // واجهة الدعوة
+  const InviteView = () => {
+    const [qrData, setQrData] = useState(null);
+    const [eventReady, setEventReady] = useState(false);
+
     useEffect(() => {
       const params = new URLSearchParams(window.location.search);
-      const q = params.get('qr');
-      setQrParam(q || null);
+      const qrParam = params.get('qr');
+      if (qrParam) {
+        const parsed = parseQRData(decodeURIComponent(qrParam));
+        setQrData(parsed);
+        checkEventTiming(parsed);
+      }
     }, []);
 
-    // عداد الوقت
-    useEffect(() => {
-      const t = setInterval(() => setNow(Date.now()), 1000);
-      return () => clearInterval(t);
-    }, []);
-
-    // جلب وقت الحدث (Global) من Supabase باستخدام USER داخل الـQR
-    useEffect(() => {
-      const fetchEventTime = async () => {
-        if (!qrParam) return;
-        const data = parseQRData(qrParam);
-        const name = data.NAME ? decodeURIComponent(data.NAME) : 'ضيفنا الكريم';
-        setGuestName(name);
-
-        const userCode = data.USER;
-        if (!userCode) return;
-
-        try {
-          const { data: row, error } = await supabase
-            .from('user_qr_codes')
-            .select('event_time')
-            .eq('email', userCode)
-            .limit(1)
-            .single();
-
-          if (!error && row?.event_time) {
-            setEventTimeMs(new Date(row.event_time).getTime());
-          } else {
-            setEventTimeMs(null);
-          }
-        } catch (_) {
-          setEventTimeMs(null);
-        }
-      };
-      fetchEventTime();
-    }, [qrParam]);
-
-    // تحضير صورة الـQR عندما يحين وقت الإظهار (نصف ساعة قبل الحدث)
-    useEffect(() => {
-      const make = async () => {
-        if (!qrParam) return;
-
-        // لو ماكو وقت عام محفوظ، نظهر QR مباشرةً
-        if (!eventTimeMs || isNaN(eventTimeMs)) {
-          const img = await generateQRCode(qrParam);
-          setQrImg(img);
-          return;
-        }
-
-        const diff = eventTimeMs - now;
-        const thirtyMin = 30 * 60 * 1000;
-        if (diff <= thirtyMin) {
-          const img = await generateQRCode(qrParam);
-          setQrImg(img);
+    const checkEventTiming = async (data) => {
+      if (!data.USER) return;
+      try {
+        const ownerData = await supabaseLoad(data.USER);
+        if (ownerData?.eventTimeISO) {
+          const eventTime = new Date(ownerData.eventTimeISO);
+          const now = new Date();
+          const thirtyMinsBefore = new Date(eventTime.getTime() - 30 * 60 * 1000);
+          setEventReady(now >= thirtyMinsBefore);
         } else {
-          setQrImg(null);
+          setEventReady(true); // إذا لم يحدد وقت، اعرض QR
         }
-      };
-      make();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [qrParam, now, eventTimeMs]);
+      } catch {
+        setEventReady(true);
+      }
+    };
 
-    if (!qrParam) {
+    if (!qrData) {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50">
-          <div className="bg-white p-8 rounded-lg shadow text-center">
-            <h1 className="text-xl font-bold mb-2">رابط غير صالح</h1>
-            <p className="text-gray-600">يرجى التأكد من صحة رابط الدعوة.</p>
+        <div className="min-h-screen flex items-center justify-center bg-gray-50" dir="rtl">
+          <div className="text-center">
+            <QrCode className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+            <p className="text-gray-600">رابط غير صالح</p>
           </div>
         </div>
       );
     }
 
-    const thirtyMin = 30 * 60 * 1000;
-const showQR = eventTimeMs ? (eventTimeMs - now <= thirtyMin) : true;
+    const guestName = qrData.NAME ? decodeURIComponent(qrData.NAME) : 'ضيف';
+    const qrString = Object.entries(qrData).map(([k, v]) => `${k}:${v}`).join('|');
 
-// الوقت المتبقي لبداية الحدث (ميلي ثانية)
-const remaining = Math.max((eventTimeMs ?? 0) - now, 0);
-// تفكيك العدّاد
-const remDays = Math.floor(remaining / (24 * 60 * 60 * 1000));
-const remHours = Math.floor((remaining % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
-const remMinutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
-const remSeconds = Math.floor((remaining % (60 * 1000)) / 1000);
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50" dir="rtl">
-        <div className="bg-white p-8 rounded-lg shadow w-full max-w-md text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">أهلا بكم !</h1>
-
-          {/* قبل 30 دقيقة: نعرض اسم الضيف بدل العداد */}
-          {eventTimeMs && !showQR && (
-  <div className="mb-6">
-    <div className="text-2xl font-bold text-gray-900">مرحبًا، {guestName} 👋</div>
-    <p className="text-sm text-gray-600 mt-2">
-      يبدأ الحدث في: <span className="font-medium">{new Date(eventTimeMs).toLocaleString()}</span>
-    </p>
-
-    {/* عدّاد لبداية الحدث */}
-    <div className="mt-4">
-      <p className="text-sm text-gray-500 mb-2">الوقت المتبقي لبداية الحدث:</p>
-      <div className="grid grid-cols-4 gap-2 text-center">
-        <div className="bg-gray-100 rounded-md p-3">
-          <div className="text-2xl font-bold">{String(remDays).padStart(2, '0')}</div>
-          <div className="text-xs text-gray-600 mt-1">يوم</div>
-        </div>
-        <div className="bg-gray-100 rounded-md p-3">
-          <div className="text-2xl font-bold">{String(remHours).padStart(2, '0')}</div>
-          <div className="text-xs text-gray-600 mt-1">ساعة</div>
-        </div>
-        <div className="bg-gray-100 rounded-md p-3">
-          <div className="text-2xl font-bold">{String(remMinutes).padStart(2, '0')}</div>
-          <div className="text-xs text-gray-600 mt-1">دقيقة</div>
-        </div>
-        <div className="bg-gray-100 rounded-md p-3">
-          <div className="text-2xl font-bold">{String(remSeconds).padStart(2, '0')}</div>
-          <div className="text-xs text-gray-600 mt-1">ثانية</div>
-        </div>
-      </div>
-      <p className="text-xs text-gray-500 mt-3">
-        سيتاح رمز الدخول قبل موعد الفعالية بـ 30 دقيقة تلقائيًا.
-      </p>
-    </div>
-  </div>
-)}
-
-
-          {/* QR عند اقتراب الحدث */}
-          {showQR && (
-            <div className="flex flex-col items-center gap-4">
-              <p className="text-green-700 font-medium">رمز الدخول جاهز للمسح ✅</p>
-              <p className="text-base text-gray-800">على اسم: <span className="font-semibold">{guestName}</span></p>
-              {qrImg ? (
-                <img src={qrImg} alt="QR" className="w-56 h-56 object-contain" />
-              ) : (
-                <div className="text-sm text-gray-500">جاري تحضير الرمز…</div>
-              )}
-              <p className="text-xs text-gray-500">يرجى إبقاء الشاشة مضاءة لإتمام عملية الدخول بسرعة.</p>
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50" dir="rtl">
+        <div className="container mx-auto px-4 py-8">
+          <div className="max-w-md mx-auto bg-white rounded-xl shadow-lg overflow-hidden">
+            <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 text-center">
+              <QrCode className="w-12 h-12 mx-auto mb-3" />
+              <h1 className="text-xl font-bold">دعوة حضور</h1>
+              <p className="opacity-90 mt-1">{guestName}</p>
             </div>
-          )}
+
+            <div className="p-6">
+              {eventReady ? (
+                <div className="text-center">
+                  <div className="mb-6">
+                    <QRCodeDisplay data={qrString} />
+                  </div>
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+                    <p className="text-green-800 font-medium">أظهر هذا الرمز للحارس</p>
+                    <p className="text-green-600 text-sm mt-1">عدد الضيوف: {qrData.COUNT}</p>
+                  </div>
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <p>📱 {qrData.PHONE || 'غير محدد'}</p>
+                    <p>🎫 كود المجموعة: {qrData.GUEST}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center">
+                  <Clock className="w-16 h-16 mx-auto text-amber-500 mb-4" />
+                  <h2 className="text-lg font-semibold text-gray-800 mb-2">لم يحن الوقت بعد</h2>
+                  <p className="text-gray-600">سيظهر رمز QR قبل موعد الفعالية بنصف ساعة</p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     );
   };
 
-  // ===== العرض =====
-  if (route === 'invite') return <InviteView />;
-  return currentView === 'login' ? <LoginForm /> : (
+  const QRCodeDisplay = ({ data }) => {
+    const [qrImage, setQrImage] = useState('');
+
+    useEffect(() => {
+      if (data) {
+        generateQRCode(data, 250).then(setQrImage);
+      }
+    }, [data]);
+
+    return qrImage ? (
+      <img src={qrImage} alt="QR Code" className="w-64 h-64 mx-auto border-2 border-gray-200 rounded-lg" />
+    ) : (
+      <div className="w-64 h-64 mx-auto border-2 border-gray-200 rounded-lg flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  };
+
+  // واجهة عرض QR منفصلة
+  const QRDisplayView = () => {
+    const [guestData, setGuestData] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+      const loadGuestData = async () => {
+        const params = new URLSearchParams(window.location.search);
+        const guestId = params.get('guest');
+        
+        if (!guestId) {
+          setLoading(false);
+          return;
+        }
+
+        try {
+          // محاولة العثور على الضيف في جميع المستخدمين
+          const { data: users, error } = await supabase
+            .from('user_qr_codes')
+            .select('*');
+
+          if (error) throw error;
+
+          let foundGuest = null;
+          for (const user of users || []) {
+            const guests = user.guests || [];
+            const guest = guests.find(g => g.id === decodeURIComponent(guestId));
+            if (guest) {
+              foundGuest = guest;
+              break;
+            }
+          }
+
+          setGuestData(foundGuest);
+        } catch (error) {
+          console.error('خطأ في تحميل بيانات الضيف:', error);
+        }
+        
+        setLoading(false);
+      };
+
+      loadGuestData();
+    }, []);
+
+    if (loading) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        </div>
+      );
+    }
+
+    if (!guestData) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50" dir="rtl">
+          <div className="text-center">
+            <QrCode className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+            <h1 className="text-xl font-semibold text-gray-800 mb-2">ضيف غير موجود</h1>
+            <p className="text-gray-600">لا يمكن العثور على بيانات الضيف المطلوب</p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50" dir="rtl">
+        <div className="container mx-auto px-4 py-8">
+          <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 text-center">
+              <QrCode className="w-16 h-16 mx-auto mb-4" />
+              <h1 className="text-2xl font-bold mb-2">{guestData.name}</h1>
+              <p className="opacity-90">رمز QR للحضور</p>
+            </div>
+
+            {/* Content */}
+            <div className="p-8">
+              <div className="text-center mb-8">
+                <div className="mb-6">
+                  {guestData.qrImageUrl && (
+                    <img 
+                      src={guestData.qrImageUrl} 
+                      alt={`QR Code ${guestData.name}`} 
+                      className="w-80 h-80 mx-auto border-4 border-gray-200 rounded-xl shadow-lg"
+                    />
+                  )}
+                </div>
+                
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+                  <p className="text-green-800 font-medium text-lg mb-2">معلومات الدعوة</p>
+                  <div className="text-green-700 space-y-2">
+                    <p>📱 الهاتف: {guestData.phone || 'غير محدد'}</p>
+                    <p>👥 عدد الضيوف: {guestData.maxGuests}</p>
+                    <p>✅ حضر: {guestData.attended || 0}</p>
+                    <p>🎫 كود المجموعة: {guestData.id}</p>
+                  </div>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-blue-800 font-medium">تعليمات للحارس</p>
+                  <p className="text-blue-700 text-sm mt-1">امسح هذا الرمز بكاميرا الموبايل لتسجيل الحضور</p>
+                </div>
+              </div>
+
+              {/* أزرار إضافية */}
+              <div className="flex justify-center gap-4">
+                <button
+                  onClick={() => window.print()}
+                  className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 flex items-center gap-2"
+                >
+                  <Download className="w-5 h-5" />
+                  طباعة
+                </button>
+                <button
+                  onClick={() => window.close()}
+                  className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                >
+                  إغلاق
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // العرض الرئيسي
+  if (route === 'qr-display') {
+    return <QRDisplayView />;
+  }
+
+  if (route === 'invite') {
+    return <InviteView />;
+  }
+
+  if (currentView === 'login') {
+    return <LoginForm />;
+  }
+
+  return (
     <div className="min-h-screen bg-gray-50" dir="rtl">
-      <div className="max-w-6xl mx-auto p-4 sm:p-6">
+      <div className="container mx-auto px-4 py-6">
         <OrganizerView />
-        {/* حاوية الماسح */}
-        {scanResult && <div className="mt-3 bg-white border p-3 rounded">{scanResult}</div>}
       </div>
     </div>
   );
